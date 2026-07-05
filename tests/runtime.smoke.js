@@ -1,0 +1,125 @@
+/* Headless runtime smoke test for Body Dash.
+   Shims the DOM, a fake webcam (getUserMedia) and a stub MediaPipe `Pose`, then
+   drives: boot -> ENABLE CAMERA & PLAY -> feed body poses (lane + jump) -> force a
+   crash -> game over. Any thrown error or console.error fails the run.
+   Run: node tests/runtime.smoke.js */
+const fs=require('fs'), vm=require('vm'), path=require('path');
+const html=fs.readFileSync(path.join(__dirname,'..','index.html'),'utf8');
+// take the LAST <script> (the game); the first is the CDN <script src> (no body)
+const bodies=[...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)].map(m=>m[1]).filter(s=>s.trim());
+const script0=bodies[bodies.length-1];
+if(!script0){ console.error('no inline script found'); process.exit(1); }
+// top-level `const` bindings aren't visible on the vm global, so append an
+// exposer (from inside the script's own scope) for the state we want to inspect.
+const script=script0+"\n;try{globalThis.__api={G:G,FOCAL:FOCAL};}catch(e){}";
+
+let errors=[];
+const rafq=[];
+let clock=0;
+
+function ctxStub(){
+  const noop=()=>{}; const grad={addColorStop:noop};
+  return new Proxy({ canvas:{width:800,height:600}, createLinearGradient:()=>grad, createRadialGradient:()=>grad,
+    setTransform:noop, getImageData:()=>({data:new Uint8ClampedArray(4)}) },
+    { get(t,k){ return k in t?t[k]:noop; }, set(){return true;} });
+}
+function el(id){
+  const h={};
+  const e={ id, dataset:{}, style:{}, textContent:'', value:'', disabled:false, srcObject:null, readyState:4,
+    classList:{ _s:new Set(), add(c){this._s.add(c);}, remove(c){this._s.delete(c);},
+      toggle(c,on){ if(on===undefined)on=!this._s.has(c); on?this._s.add(c):this._s.delete(c); return on;}, contains(c){return this._s.has(c);} },
+    setAttribute(k,v){ this['_'+k]=String(v); }, getAttribute(k){ return this['_'+k]; },
+    addEventListener(ev,fn){ (h[ev]=h[ev]||[]).push(fn); }, removeEventListener(){},
+    getContext(){ return ctxStub(); }, play(){ return Promise.resolve(); },
+    getBoundingClientRect(){ return {width:360,height:270,left:0,top:0,right:360,bottom:270}; },
+    _fire(ev,o){ (h[ev]||[]).forEach(fn=>fn(Object.assign({preventDefault(){},target:e},o))); }, _has(ev){return !!(h[ev]&&h[ev].length);} };
+  return e;
+}
+const cache={};
+const byId=id=>cache[id]||(cache[id]=el(id));
+const diffBtns=['chill','normal','intense'].map(d=>{ const b=el('d-'+d); b.dataset.diff=d; return b; });
+
+// capture the pose callback the game registers
+const POSE={cb:null};
+class PoseStub{ constructor(){} setOptions(){} onResults(cb){ this.cb=cb; POSE.cb=cb; }
+  async send(){ if(this.cb) this.cb(makeResult(CURRENT_LM)); } close(){} }
+
+// build a plausible 33-point landmark set; x,y in [0,1]
+function makeResult(lm){ return {poseLandmarks:lm}; }
+function bodyLandmarks(centerX, hipY){
+  const lm=Array.from({length:33},()=>({x:centerX,y:0.5,visibility:1}));
+  const set=(i,x,y)=>{ lm[i]={x,y,visibility:1}; };
+  const shoY=hipY-0.22; // torso ~0.22
+  set(0,centerX,shoY-0.12);           // nose
+  set(11,centerX-0.06,shoY); set(12,centerX+0.06,shoY);   // shoulders
+  set(23,centerX-0.05,hipY); set(24,centerX+0.05,hipY);   // hips
+  set(25,centerX-0.05,hipY+0.15); set(26,centerX+0.05,hipY+0.15); // knees
+  set(27,centerX-0.05,hipY+0.30); set(28,centerX+0.05,hipY+0.30); // ankles
+  return lm;
+}
+let CURRENT_LM=bodyLandmarks(0.5,0.55);
+
+const document={ getElementById:byId, createElement:()=>el('new'),
+  querySelectorAll:sel=> sel.includes('#diffRow')?diffBtns:[], addEventListener(){}, };
+const store={};
+const localStorage={ getItem:k=>k in store?store[k]:null, setItem:(k,v)=>{store[k]=String(v);} };
+function Osc(){ return {type:'',frequency:{setValueAtTime(){}},connect(){return this;},start(){},stop(){}}; }
+function Gain(){ return {gain:{setValueAtTime(){},exponentialRampToValueAtTime(){}},connect(){return this;}}; }
+function AudioCtx(){ this.currentTime=0; this.state='running'; this.destination={}; this.resume=()=>{}; this.createOscillator=()=>new Osc(); this.createGain=()=>new Gain(); }
+const win={ innerWidth:1280, innerHeight:720, devicePixelRatio:2,
+  matchMedia:()=>({matches:false}), AudioContext:AudioCtx, webkitAudioContext:AudioCtx,
+  addEventListener(){}, requestAnimationFrame:fn=>{ rafq.push(fn); return rafq.length; } };
+
+const sandbox={ window:win, document, localStorage, Pose:PoseStub,
+  navigator:{ vibrate:()=>true, mediaDevices:{ getUserMedia:async()=>({ getTracks:()=>[{stop(){}}] }) } },
+  performance:{ now:()=>clock },
+  requestAnimationFrame:win.requestAnimationFrame,
+  setTimeout:(fn)=>{ try{fn();}catch(e){errors.push('setTimeout: '+e.stack);} return 0; }, clearTimeout(){},
+  console:{ log(){}, warn(){}, error:(...a)=>errors.push('console.error: '+a.join(' ')) },
+  Math,Date,JSON,Array,Object,Uint8ClampedArray,parseInt,parseFloat,isNaN,String,Number,Promise,Symbol };
+sandbox.globalThis=sandbox;
+
+try{ vm.createContext(sandbox); vm.runInContext(script,sandbox,{filename:'index.html'}); }
+catch(e){ console.error('boot threw:',e.stack); process.exit(1); }
+
+function frames(n,stepMs){ stepMs=stepMs||16; for(let i=0;i<n;i++){ clock+=stepMs; try{ sandbox.frame(clock); }catch(e){ errors.push('frame: '+e.stack); } } }
+function feed(lm){ CURRENT_LM=lm; try{ POSE.cb && POSE.cb(makeResult(lm)); }catch(e){ errors.push('pose: '+e.stack); } }
+
+(async()=>{
+  frames(3);                               // boot frames on start screen
+  byId('playBtn')._fire('click');          // ENABLE CAMERA & PLAY (async)
+  await new Promise(r=>setTimeout(r,0)); await Promise.resolve(); await Promise.resolve();
+  // small settle
+  frames(2);
+  const GS=sandbox.__api&&sandbox.__api.G;
+  if(!GS){ console.log('RUNTIME ERRORS:\n could not reach game state (__api missing)'); process.exit(1); }
+  if(GS.screen!=='play'){ errors.push('did not enter play after camera init (screen='+GS.screen+')'); }
+
+  // simulate: user steps to THEIR right -> appears on image-left (small rawX) -> lane 2
+  feed(bodyLandmarks(0.12,0.55)); frames(4);
+  if(GS.lane!==2) errors.push('stepping right did not move to lane 2 (lane='+GS.lane+')');
+  // step back to centre
+  feed(bodyLandmarks(0.5,0.55)); frames(4);
+  if(GS.lane!==1) errors.push('returning to centre did not reach lane 1 (lane='+GS.lane+')');
+  // establish baseline then jump (hips rise: y 0.55 -> 0.44)
+  feed(bodyLandmarks(0.5,0.55)); feed(bodyLandmarks(0.5,0.55));
+  feed(bodyLandmarks(0.5,0.44));
+  if(!GS.jump.active) errors.push('rising body did not trigger a jump');
+  frames(20);
+
+  // running in place should raise boost over time
+  for(let i=0;i<12;i++){ feed(bodyLandmarks(0.5, i%2? 0.55:0.58)); frames(2); }
+
+  // force a crash: a tall block in the player's lane crossing the hit plane
+  GS.jump.active=false;
+  GS.obstacles.length=0;
+  GS.obstacles.push({lane:GS.lane, z:0.7, type:'block', passed:false, coin:false});
+  frames(30);
+  await new Promise(r=>setTimeout(r,0));
+  if(GS.screen!=='over') errors.push('block in lane did not cause game over (screen='+GS.screen+')');
+
+  if(errors.length){ console.log('RUNTIME ERRORS:\n'+errors.join('\n')); process.exit(1); }
+  console.log('runtime smoke: boot + camera-init + lane + jump + boost + crash all ran with no errors');
+  console.log('  final: screen='+GS.screen+'  score='+Math.floor(GS.score)+'  best persisted='+store['bodydash_best']);
+  process.exit(0);
+})();
