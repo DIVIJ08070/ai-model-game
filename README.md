@@ -5,11 +5,14 @@ body**. Your webcam tracks a full-body skeleton (MediaPipe Pose) and turns your
 real movements into the game:
 
 - **Step left / right** → your runner switches lane.
-- **Jump in real life** → the runner hops over low barriers.
+- **Jump in real life** → hop over **yellow** low barriers.
+- **Duck / crouch** → **slide under purple overhead bars**.
+- **Pink walls** can't be jumped or ducked → you have to *dodge* them into another lane.
 - **Run in place** → fills a boost bar for extra speed & score (your runner turns green).
-- **Tall blocks can't be jumped** → you have to *dodge* them into another lane.
 - **Start hands-free** → in the lobby, hold up a ✌️ **peace sign** for ~0.6s to begin
-  (or just press the **▶ Start** button).
+  (or press the **▶ Start** button).
+- **Restart hands-free** → after a crash, strike a **🧍 T-pose** (arms straight out) for
+  ~0.6s to instantly run again (or press **▶ Run Again**).
 
 The camera panel (top-right) shows your live video with your **skeleton drawn on
 you**, a **body box**, and **two lane-divider lines** with your current lane
@@ -72,9 +75,12 @@ few stable signals (all in `tests/logic.test.js`):
   **dead-zone (hysteresis)** stops wobbles from flipping lanes. The camera panel draws
   both trigger lines and a live marker of your position so you can see exactly how far
   to step.
-- **Jump** — a jump fires when your hips rise above an **auto-calibrated baseline**
-  by more than a threshold that **scales with your torso size**, so it works
-  whether you're close to or far from the camera.
+- **Jump / duck** — a jump fires when your body rises above an **auto-calibrated
+  baseline** by more than a threshold that **scales with your body size**; a duck/slide
+  is the exact mirror (dropping below the baseline). Works near or far from the camera.
+- **Gestures** — a ✌️ peace sign (via a second MediaPipe **Hands** model) starts the
+  game from the lobby; a 🧍 **T-pose** (wrists spread wide, level with the shoulders)
+  restarts it from the game-over screen. Both require a short hold to avoid misfires.
 - **Run boost** — vertical motion energy of your knees/ankles, normalised by torso
   length, fills the boost bar.
 

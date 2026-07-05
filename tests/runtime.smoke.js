@@ -65,6 +65,10 @@ function bodyLandmarks(centerX, hipY){
   set(27,centerX-0.05,hipY+0.30); set(28,centerX+0.05,hipY+0.30); // ankles
   return lm;
 }
+function tposeLandmarks(){ const lm=bodyLandmarks(0.5,0.55);
+  lm[11]={x:0.42,y:0.4,visibility:1}; lm[12]={x:0.58,y:0.4,visibility:1};   // shoulders
+  lm[15]={x:0.15,y:0.4,visibility:1}; lm[16]={x:0.85,y:0.4,visibility:1};   // wrists out wide, level
+  return lm; }
 let CURRENT_LM=bodyLandmarks(0.5,0.55);
 
 const document={ getElementById:byId, createElement:()=>el('new'),
@@ -126,17 +130,33 @@ function feedHand(h){ CURRENT_HAND=h; try{ HANDS.cb && HANDS.cb({multiHandLandma
   feed(bodyLandmarks(0.5,0.40));
   if(!GS.jump.active) errors.push('rising body did not trigger a jump');
   frames(20);
+  // now duck: hips drop sharply below the settled baseline
+  GS.jump.active=false; GS.jumpCooldown=0;
+  hold(bodyLandmarks(0.5,0.55), 25);   // settle baseline again
+  feed(bodyLandmarks(0.5,0.72));
+  if(!GS.duck.active) errors.push('dropping body did not trigger a duck/slide');
+  frames(6);
 
   // running in place should raise boost over time
   for(let i=0;i<14;i++){ feed(bodyLandmarks(0.5, i%2? 0.55:0.59)); frames(2); }
 
-  // force a crash: a tall block in the player's lane crossing the hit plane
-  GS.jump.active=false;
-  GS.obstacles.length=0;
+  // overhead bar: DUCKING slides under it safely
+  GS.jump.active=false; GS.spawnTimer=999; GS.obstacles.length=0;
+  GS.duck.active=true; GS.duck.t=0.3;
+  GS.obstacles.push({lane:GS.lane, z:0.7, type:'overhead', passed:false, coin:false});
+  frames(6);
+  if(GS.screen!=='play') errors.push('ducking did not clear the overhead bar (screen='+GS.screen+')');
+
+  // force a crash: a tall block (can't jump/duck) in the player's lane
+  GS.jump.active=false; GS.duck.active=false; GS.obstacles.length=0;
   GS.obstacles.push({lane:GS.lane, z:0.7, type:'block', passed:false, coin:false});
   frames(30);
   await new Promise(r=>setTimeout(r,0));
   if(GS.screen!=='over') errors.push('block in lane did not cause game over (screen='+GS.screen+')');
+
+  // 🧍 T-pose restarts from the game-over screen
+  feed(tposeLandmarks()); frames(45);
+  if(GS.screen!=='play') errors.push('T-pose did not restart from game over (screen='+GS.screen+')');
 
   if(errors.length){ console.log('RUNTIME ERRORS:\n'+errors.join('\n')); process.exit(1); }
   console.log('runtime smoke: boot + camera-init + lane + jump + boost + crash all ran with no errors');

@@ -11,6 +11,8 @@ function laneStep(shoulderW){ return clamp(shoulderW*0.7,0.055,0.16); }
 function jumpThreshold(t){ return clamp(0.34*t,0.045,0.13); }
 function isJumpTrigger(curY,prevY,baseY,t){ const th=jumpThreshold(t); return (baseY-curY)>th && curY<prevY; }
 function runningLevel(e,t){ const n=t>0?e/t:0; return clamp(n/0.9,0,1); }
+function jumpThreshold(t){ return clamp(0.34*t,0.045,0.13); }
+function isDuckTrigger(c,p,b,t){ const th=jumpThreshold(t); return (c-b)>th && c>p; }
 function isVictory(h){ if(!h||h.length<21) return false;
   const up=(t,p)=>(h[p].y-h[t].y)>0.04;
   const index=up(8,6),middle=up(12,10),ring=up(16,14),pinky=up(20,18);
@@ -18,7 +20,14 @@ function isVictory(h){ if(!h||h.length<21) return false;
   const spread=Math.hypot(h[8].x-h[12].x,h[8].y-h[12].y);
   const size=Math.hypot(h[0].x-h[9].x,h[0].y-h[9].y)+1e-6;
   return spread/size>0.30; }
+function isTpose(lm){ if(!lm) return false;
+  const vis=i=>lm[i]&&(lm[i].visibility===undefined||lm[i].visibility>0.5);
+  if(!(vis(11)&&vis(12)&&vis(15)&&vis(16))) return false;
+  const shY=(lm[11].y+lm[12].y)/2, shW=Math.abs(lm[11].x-lm[12].x)+1e-6;
+  const span=Math.abs(lm[15].x-lm[16].x); if(span<shW*2.2) return false;
+  const tol=shW*0.9; return Math.abs(lm[15].y-shY)<tol && Math.abs(lm[16].y-shY)<tol; }
 function mkHand(spec){ const h=Array.from({length:21},()=>({x:0.5,y:0.5})); for(const k in spec) h[k]=spec[k]; return h; }
+function mkBody(spec){ const lm=Array.from({length:33},()=>({x:0.5,y:0.5,visibility:1})); for(const k in spec) lm[k]={x:spec[k][0],y:spec[k][1],visibility:1}; return lm; }
 
 let pass=0,fail=0;
 const ok=(n,c,d)=>{ c?(pass++,console.log('  ✓ '+n)):(fail++,console.log('  ✗ '+n+'  — '+d)); };
@@ -98,6 +107,22 @@ ok('fist is NOT a peace sign', isVictory(FIST)===false);
 ok('open palm is NOT a peace sign', isVictory(OPEN)===false);
 ok('two fingers held together is NOT a peace sign', isVictory(TOGETHER)===false);
 ok('no hand -> not a peace sign', isVictory(null)===false && isVictory([])===false);
+
+// ---- duck / slide trigger (mirror of jump) ----
+const T2=0.25; // threshold 0.085
+ok('dropping below baseline triggers a duck', isDuckTrigger(0.62,0.55,0.50,T2)===true);
+ok('rising body never triggers a duck', isDuckTrigger(0.40,0.46,0.50,T2)===false);
+ok('a small dip does not trigger a duck', isDuckTrigger(0.55,0.53,0.50,T2)===false);
+
+// ---- 🧍 T-pose (both arms out at shoulder height, wide) ----
+const T_POSE=mkBody({11:[0.42,0.4],12:[0.58,0.4],15:[0.15,0.4],16:[0.85,0.4]});
+const ARMS_DOWN=mkBody({11:[0.42,0.4],12:[0.58,0.4],15:[0.4,0.85],16:[0.6,0.85]});
+const ARMS_NARROW=mkBody({11:[0.42,0.4],12:[0.58,0.4],15:[0.45,0.4],16:[0.55,0.4]});
+const ARMS_UP=mkBody({11:[0.42,0.4],12:[0.58,0.4],15:[0.2,0.1],16:[0.8,0.1]});
+ok('arms out at shoulder height is a T-pose', isTpose(T_POSE)===true);
+ok('arms down is NOT a T-pose', isTpose(ARMS_DOWN)===false);
+ok('arms tucked in (narrow) is NOT a T-pose', isTpose(ARMS_NARROW)===false);
+ok('arms raised up (not level) is NOT a T-pose', isTpose(ARMS_UP)===false);
 
 console.log('\n'+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);

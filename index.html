@@ -51,8 +51,8 @@
   .ld.on{ background:var(--lane); border-color:#fff; box-shadow:0 0 10px var(--lane); }
   .cad{ width:120px; height:12px; border-radius:8px; background:rgba(0,0,0,0.4); overflow:hidden; }
   .cad > span{ display:block; height:100%; width:0%; background:linear-gradient(90deg,var(--warn),var(--good)); transition:width .1s linear; }
-  #jumpChip{ opacity:0.35; transition:opacity .1s, transform .08s; }
-  #jumpChip.fire{ opacity:1; transform:scale(1.12); color:var(--good); border-color:var(--good); }
+  #jumpChip,#duckChip{ opacity:0.35; transition:opacity .1s, transform .08s; }
+  #jumpChip.fire,#duckChip.fire{ opacity:1; transform:scale(1.12); color:var(--good); border-color:var(--good); }
 
   /* ready lobby */
   #readyBar{
@@ -151,6 +151,7 @@
   <div id="feedback" class="hidden" style="display:none">
     <div class="chip"><span class="lanedots"><span class="ld" id="ld0"></span><span class="ld on" id="ld1"></span><span class="ld" id="ld2"></span></span></div>
     <div class="chip" id="jumpChip">⬆ JUMP</div>
+    <div class="chip" id="duckChip">⬇ SLIDE</div>
     <div class="chip">🏃 <span class="cad"><span id="cadBar"></span></span></div>
   </div>
 
@@ -162,9 +163,10 @@
       <div class="steps">
         <div><b>①</b> Stand <b>2–3 m back</b> so the camera sees you head-to-toe.</div>
         <div><b>②</b> <b>Step left / right</b> → your runner switches lane.</div>
-        <div><b>③</b> <b>Jump</b> in real life → hop over low barriers.</div>
+        <div><b>③</b> <b>Jump</b> → hop yellow barriers · <b>Duck / crouch</b> → slide under purple bars.</div>
         <div><b>④</b> <b>Run in place</b> → fills the boost bar for extra speed &amp; score.</div>
-        <div><b>⑤</b> Tall blocks can't be jumped — <b>dodge</b> to another lane!</div>
+        <div><b>⑤</b> Pink walls can't be jumped or ducked — <b>dodge</b> to another lane!</div>
+        <div><b>⑥</b> Lost? Make a <b>🧍 T-shape</b> (arms out) to instantly restart.</div>
       </div>
       <div class="diffrow" id="diffRow">
         <button data-diff="chill">Chill</button>
@@ -188,6 +190,7 @@
         <div class="s"><div class="n" id="overDist">0m</div><div class="l">Distance</div></div>
         <div class="s"><div class="n" id="overBest">0</div><div class="l">Best</div></div>
       </div>
+      <div class="chip big" id="restartHint" style="margin:0 auto 12px">🧍 <b>Make a T-shape</b> to restart</div>
       <button class="btn" id="againBtn">▶ RUN AGAIN</button>
       <button class="btn ghost" id="homeBtn" style="margin-top:10px">Home</button>
     </div>
@@ -240,6 +243,11 @@ function isJumpTrigger(curY, prevY, baselineY, torsoLen){
   const th=jumpThreshold(torsoLen);
   return (baselineY - curY) > th && curY < prevY; // higher in frame (smaller y) & still rising
 }
+// Duck / slide trigger: the mirror image of a jump — body dropped BELOW baseline.
+function isDuckTrigger(curY, prevY, baselineY, torsoLen){
+  const th=jumpThreshold(torsoLen);
+  return (curY - baselineY) > th && curY > prevY; // lower in frame (bigger y) & still dropping
+}
 // Running level 0..1 from leg-landmark vertical motion energy, normalised by torso.
 function runningLevel(energy, torsoLen){
   const norm = torsoLen>0 ? energy/(torsoLen) : 0;
@@ -257,8 +265,21 @@ function isVictory(h){
   const size=Math.hypot(h[0].x-h[9].x, h[0].y-h[9].y)+1e-6; // wrist->middle-knuckle
   return spread/size > 0.30;                             // a V, not two fingers together
 }
+// 🧍 T-pose from Pose landmarks: both arms stretched out sideways at shoulder height.
+// Wrists spread far wider than the shoulders and sit near shoulder level (arms level).
+function isTpose(lm){
+  if(!lm) return false;
+  const vis=i=>lm[i]&&(lm[i].visibility===undefined||lm[i].visibility>0.5);
+  if(!(vis(11)&&vis(12)&&vis(15)&&vis(16))) return false;
+  const shY=(lm[11].y+lm[12].y)/2;
+  const shW=Math.abs(lm[11].x-lm[12].x)+1e-6;
+  const span=Math.abs(lm[15].x-lm[16].x);          // wrist-to-wrist width
+  if(span < shW*2.2) return false;                 // arms must be stretched out wide
+  const tol=shW*0.9;                               // ...and roughly at shoulder height
+  return Math.abs(lm[15].y-shY)<tol && Math.abs(lm[16].y-shY)<tol;
+}
 if(typeof module!=='undefined'&&module.exports){
-  module.exports={pickLane,pickLaneOffset,laneStep,jumpThreshold,isJumpTrigger,runningLevel,isVictory,clamp,lerp};
+  module.exports={pickLane,pickLaneOffset,laneStep,jumpThreshold,isJumpTrigger,isDuckTrigger,runningLevel,isVictory,isTpose,clamp,lerp};
 }
 
 /* --------------------------------- audio --------------------------------- */
@@ -272,6 +293,7 @@ const Sound=(()=>{
   return { on, setMuted:m=>muted=m, isMuted:()=>muted,
     lane:()=>blip(520,0.06,'square',0.08),
     jump:()=>{ blip(440,0.09,'triangle',0.12); setTimeout(()=>blip(760,0.09,'triangle',0.1),70); },
+    duck:()=>{ blip(300,0.1,'triangle',0.12); setTimeout(()=>blip(180,0.14,'triangle',0.1),70); },
     coin:()=>blip(1040,0.07,'triangle',0.09),
     crash:()=>{ blip(160,0.4,'sawtooth',0.16); setTimeout(()=>blip(90,0.5,'sawtooth',0.14),110); },
     start:()=>{ [440,554,659,880].forEach((f,i)=>setTimeout(()=>blip(f,0.12,'triangle',0.1),i*90)); } };
@@ -310,14 +332,14 @@ const G={
   screen:'start', diffKey:'normal',
   running:false, best:0,
   // player
-  lane:1, laneX:0, jump:{active:false,t:0,dur:0.62,peak:1}, // laneX interpolated offset
+  lane:1, laneX:0, jump:{active:false,t:0,dur:0.62,peak:1}, duck:{active:false,t:0,dur:0.7}, duckCooldown:0,
   // world
   obstacles:[], spawnTimer:0, dist:0, score:0, speed:0, baseSpeed:0, boost:0,
   // body signals
   body:{seen:false, x:0.5, baseX:0.5, step:0.11, prevY:0.5, baseY:0.5, torso:0.25, runLevel:0, lastLm:null},
   poseLm:null, camBig:false,
-  // start-gesture (ready lobby)
-  handLm:null, gesture:{victory:false, hold:0},
+  // start-gesture (ready lobby) + T-pose restart
+  handLm:null, gesture:{victory:false, hold:0, tpose:false, tHold:0},
   jumpCooldown:0,
   shake:0, flash:0,
 };
@@ -430,12 +452,17 @@ function onPoseResults(res){
     if(G.lane===1) G.body.baseX = lerp(G.body.baseX, G.body.x, 0.08);
     const nl=pickLaneOffset(G.body.x - G.body.baseX, G.lane, step, step*0.35);
     if(nl!==G.lane){ G.lane=nl; Sound.lane(); updateLaneDots(); }
-    // jump (adaptive baseline while grounded)
-    if(!G.jump.active && G.jumpCooldown<=0){
-      if(isJumpTrigger(anchorY, G.body.prevY, G.body.baseY, torso)){ triggerJump(); }
-    }
-    if(!G.jump.active) G.body.baseY = lerp(G.body.baseY, anchorY, 0.06);
+    // jump (rise) or duck/slide (drop) — one at a time, while grounded
+    const grounded=!G.jump.active && !G.duck.active;
+    if(grounded && G.jumpCooldown<=0 && isJumpTrigger(anchorY, G.body.prevY, G.body.baseY, torso)) triggerJump();
+    else if(grounded && G.duckCooldown<=0 && isDuckTrigger(anchorY, G.body.prevY, G.body.baseY, torso)) triggerDuck();
+    // baseline follows the body only while grounded
+    if(grounded) G.body.baseY = lerp(G.body.baseY, anchorY, 0.06);
     G.body.prevY=anchorY;
+  } else if(G.screen==='over'){
+    // watch for a 🧍 T-pose to restart (progress accumulated in the frame loop)
+    G.gesture.tpose = isTpose(lm);
+    G.body.baseX=G.body.x; G.body.prevY=anchorY;
   } else {
     // not playing: keep learning the neutral standing position
     G.body.baseX=G.body.x; G.body.baseY=anchorY; G.body.prevY=anchorY;
@@ -465,6 +492,19 @@ function drawCamPanel(){
   let status;
   if(G.screen==='ready'){
     status = drawReadyOverlay(x,y,w,h);
+  } else if(G.screen==='over'){
+    // game-over: watch for a T-pose to restart. Show a hold-progress ring.
+    const p=clamp(G.gesture.tHold/GESTURE_HOLD,0,1);
+    if(p>0){ const cx=x+w/2, cy=y+h*0.42, r=26;
+      gx.lineWidth=6; gx.strokeStyle='rgba(255,255,255,0.18)'; gx.beginPath(); gx.arc(cx,cy,r,0,7); gx.stroke();
+      gx.strokeStyle='#ffd23f'; gx.beginPath(); gx.arc(cx,cy,r,-Math.PI/2,-Math.PI/2+p*Math.PI*2,false); gx.stroke(); }
+    if(lm){
+      const px=i=>x+(1-lm[i].x)*w, py=i=>y+lm[i].y*h;
+      gx.lineWidth=4; gx.strokeStyle=G.gesture.tpose?'#3ef0a0':'rgba(255,93,162,0.95)'; gx.lineCap='round'; gx.beginPath();
+      CON.forEach(([a,b])=>{ if(lm[a]&&lm[b]){ gx.moveTo(px(a),py(a)); gx.lineTo(px(b),py(b)); } });
+      gx.stroke();
+    }
+    status = G.gesture.tpose ? 'hold the T… restarting' : '🧍 make a T-shape to restart';
   } else {
     // trigger zones relative to YOUR learned centre: two dashed lines at baseX±step
     // mark where a lane change fires; a bright marker shows your live position.
@@ -535,9 +575,13 @@ function drawReadyOverlay(x,y,w,h){
 /* --------------------------------- game ---------------------------------- */
 function triggerJump(){
   G.jump.active=true; G.jump.t=0; G.jumpCooldown=0.4;
-  $('jumpChip').classList.add('fire');
-  setTimeout(()=>$('jumpChip').classList.remove('fire'),260);
+  $('jumpChip').classList.add('fire'); setTimeout(()=>$('jumpChip').classList.remove('fire'),260);
   Sound.jump();
+}
+function triggerDuck(){
+  G.duck.active=true; G.duck.t=0; G.duckCooldown=0.4;
+  $('duckChip').classList.add('fire'); setTimeout(()=>$('duckChip').classList.remove('fire'),260);
+  Sound.duck();
 }
 function spawnObstacle(){
   // pick 1 (sometimes 2) lanes; never block all three at the same depth
@@ -546,8 +590,10 @@ function spawnObstacle(){
   const chosen=[];
   for(let i=0;i<count;i++){ const idx=lanes.splice((Math.random()*lanes.length)|0,1)[0]; chosen.push(idx); }
   chosen.forEach(l=>{
-    const type = Math.random()<0.5?'barrier':'block';   // barrier=jump, block=dodge
-    const coin = Math.random()<0.35;
+    // barrier=jump over · overhead=slide under · block=dodge to another lane
+    const r=Math.random();
+    const type = r<0.4?'barrier' : r<0.72?'overhead' : 'block';
+    const coin = type!=='block' && Math.random()<0.4;   // coins sit where you can grab them
     G.obstacles.push({lane:l, z:ZFAR, type, passed:false, coin});
   });
   // guarantee at least one open lane by not spawning >2
@@ -565,9 +611,10 @@ function startGame(){
   const d=DIFF[G.diffKey];
   G.obstacles.length=0; G.spawnTimer=0; G.dist=0; G.score=0; G.boost=0;
   G.lane=1; G.laneX=0; G.jump.active=false; G.jump.t=0; G.jumpCooldown=0;
+  G.duck.active=false; G.duck.t=0; G.duckCooldown=0;
   G.body.baseX=G.body.x;  // lock in your current stance as the neutral centre
   G.baseSpeed=d.speed; G.speed=d.speed;
-  G.gesture.hold=0; G.gesture.victory=false;
+  G.gesture.hold=0; G.gesture.victory=false; G.gesture.tHold=0; G.gesture.tpose=false;
   G.running=true; G.screen='play';
   updateLaneDots();
   show('startScreen',false); show('overScreen',false); show('readyBar',false);
@@ -577,6 +624,7 @@ function startGame(){
 function gameOver(){
   if(G.screen!=='play') return;
   G.running=false; G.screen='over';
+  G.gesture.tpose=false; G.gesture.tHold=0;   // fresh T-pose restart watch
   G.flash=1; G.shake=16;
   if(navigator.vibrate) try{navigator.vibrate([120,60,120]);}catch(e){}
   Sound.crash();
@@ -603,12 +651,11 @@ function update(dt){
   // slide the visual lane offset toward the target
   const targetOff=(G.lane-1);
   G.laneX = lerp(G.laneX, targetOff, clamp(dt*12,0,1));
-  // jump arc
-  if(G.jump.active){
-    G.jump.t+=dt;
-    if(G.jump.t>=G.jump.dur){ G.jump.active=false; G.jump.t=0; }
-  }
+  // jump arc / duck slide timers
+  if(G.jump.active){ G.jump.t+=dt; if(G.jump.t>=G.jump.dur){ G.jump.active=false; G.jump.t=0; } }
+  if(G.duck.active){ G.duck.t+=dt; if(G.duck.t>=G.duck.dur){ G.duck.active=false; G.duck.t=0; } }
   if(G.jumpCooldown>0) G.jumpCooldown-=dt;
+  if(G.duckCooldown>0) G.duckCooldown-=dt;
   // move obstacles toward player
   G.spawnTimer-=dt;
   if(G.spawnTimer<=0){ spawnObstacle(); G.spawnTimer=Math.max(0.42, d.spawn - G.dist*0.0016); }
@@ -624,19 +671,18 @@ function update(dt){
   if(G.shake>0) G.shake=Math.max(0,G.shake-dt*30);
   if(G.flash>0) G.flash=Math.max(0,G.flash-dt*1.6);
 }
-function jumpHeight(){ // 0..1 arc
-  if(!G.jump.active) return 0;
-  const p=G.jump.t/G.jump.dur; return Math.sin(p*Math.PI);
-}
+function jumpHeight(){ if(!G.jump.active) return 0; return Math.sin((G.jump.t/G.jump.dur)*Math.PI); } // 0..1 arc
+function duckAmount(){ if(!G.duck.active) return 0; return Math.sin((G.duck.t/G.duck.dur)*Math.PI); }   // 0..1 slide
+function isDucking(){ return duckAmount()>0.28; }
 function resolveCollision(o){
-  if(o.lane!==G.lane){ if(o.coin){ /* missed coin */ } return; }
-  // same lane as player
-  if(o.coin && o.type==='barrier'){ /* coin sits on barrier, handled below */ }
-  if(o.type==='barrier'){
-    // must be jumping (in the air) to clear it
-    if(jumpHeight()>0.28){ if(o.coin){ collectCoin(o); } return; }
+  if(o.lane!==G.lane) return;                     // different lane -> safe
+  if(o.type==='barrier'){                          // low: JUMP over it
+    if(jumpHeight()>0.28){ if(o.coin) collectCoin(o); return; }
     return gameOver();
-  } else { // block — cannot jump, must be in another lane
+  } else if(o.type==='overhead'){                  // high bar: DUCK/SLIDE under it
+    if(isDucking()){ if(o.coin) collectCoin(o); return; }
+    return gameOver();
+  } else {                                         // block: can't jump/duck -> must dodge
     return gameOver();
   }
 }
@@ -694,36 +740,58 @@ function drawRoad(){
 function drawObstacle(o){
   const pf=pfOf(o.z); if(pf<=0.02) return;
   const x=laneCenterX(o.lane,pf), y=screenYOf(pf);
-  const w=lerp(10,W*0.2,pf), h=(o.type==='block'?lerp(20,H*0.34,pf):lerp(10,H*0.11,pf));
+  const w=lerp(10,W*0.2,pf);
+  const rr=Math.min(10,w*0.2);
   gx.save();
   // shadow
   gx.fillStyle='rgba(0,0,0,0.35)'; gx.beginPath(); gx.ellipse(x,y,w*0.6,w*0.18,0,0,7); gx.fill();
-  if(o.type==='block'){
-    gx.fillStyle='#ff5da2'; roundRect(x-w/2,y-h,w,h,Math.min(10,w*0.2)); gx.fill();
+  if(o.type==='block'){                       // TALL wall — dodge to another lane
+    const h=lerp(20,H*0.34,pf);
+    gx.fillStyle='#ff5da2'; roundRect(x-w/2,y-h,w,h,rr); gx.fill();
     gx.fillStyle='rgba(255,255,255,0.25)'; gx.fillRect(x-w/2,y-h,w,h*0.16);
-    gx.strokeStyle='#7e1f47'; gx.lineWidth=Math.max(1,2*pf); roundRect(x-w/2,y-h,w,h,Math.min(10,w*0.2)); gx.stroke();
-  } else {
+    gx.strokeStyle='#7e1f47'; gx.lineWidth=Math.max(1,2*pf); roundRect(x-w/2,y-h,w,h,rr); gx.stroke();
+  } else if(o.type==='overhead'){             // HIGH bar — duck / slide under it
+    const clr=lerp(16,H*0.16,pf);             // clearance gap under the bar
+    const bh=lerp(9,H*0.10,pf), bw=w*1.12, top=y-clr-bh;
+    // side posts down to the ground
+    gx.fillStyle='#5a3fb0';
+    gx.fillRect(x-bw/2, top, Math.max(2,4*pf), clr+bh);
+    gx.fillRect(x+bw/2-Math.max(2,4*pf), top, Math.max(2,4*pf), clr+bh);
+    // the bar (hazard stripes)
+    gx.fillStyle='#a06bff'; roundRect(x-bw/2,top,bw,bh,rr*0.6); gx.fill();
+    gx.fillStyle='rgba(0,0,0,0.55)'; for(let s=-2;s<=2;s++){ gx.fillRect(x+s*bw*0.18-bw*0.05,top,bw*0.09,bh); }
+    gx.strokeStyle='#7a52d8'; gx.lineWidth=Math.max(1,2*pf); roundRect(x-bw/2,top,bw,bh,rr*0.6); gx.stroke();
+    // little "slide under" arrow hint in the gap
+    gx.strokeStyle='rgba(160,107,255,0.7)'; gx.lineWidth=Math.max(1,2*pf);
+    gx.beginPath(); gx.moveTo(x-w*0.16,y-clr*0.5); gx.lineTo(x,y-clr*0.2); gx.lineTo(x+w*0.16,y-clr*0.5); gx.stroke();
+  } else {                                    // LOW barrier — jump over it
+    const h=lerp(10,H*0.11,pf);
     gx.fillStyle='#ffd23f'; roundRect(x-w/2,y-h,w,h,Math.min(8,w*0.2)); gx.fill();
     gx.fillStyle='#0c1022'; for(let s=-1;s<=1;s++){ gx.fillRect(x+s*w*0.28-w*0.05,y-h,w*0.1,h); }
     gx.strokeStyle='#a6821a'; gx.lineWidth=Math.max(1,2*pf); roundRect(x-w/2,y-h,w,h,Math.min(8,w*0.2)); gx.stroke();
   }
-  // coin above barrier
-  if(o.coin){ const cy=y-h-lerp(6,26,pf); gx.fillStyle='#ffe27a'; gx.beginPath(); gx.arc(x,cy,lerp(3,13,pf),0,7); gx.fill();
-    gx.strokeStyle='#c9a227'; gx.lineWidth=Math.max(1,2*pf); gx.stroke(); }
+  // coin: above a jump-barrier, or low in the gap of an overhead bar
+  if(o.coin){
+    const cy = o.type==='overhead' ? y-lerp(8,26,pf) : y-lerp(16,H*0.11,pf)-lerp(6,26,pf);
+    gx.fillStyle='#ffe27a'; gx.beginPath(); gx.arc(x,cy,lerp(3,12,pf),0,7); gx.fill();
+    gx.strokeStyle='#c9a227'; gx.lineWidth=Math.max(1,2*pf); gx.stroke();
+  }
   gx.restore();
 }
 function drawPlayer(){
   const pf=1, baseX=laneCenterX(1,pf)+G.laneX*halfRoad(pf)*0.62;
   const gyv=groundY();
-  const jh=jumpHeight();
+  const jh=jumpHeight(), da=duckAmount();
   const y=gyv - jh*H*0.22;
   const s=Math.min(W,H)*0.055; // character scale
   const t=performance.now()/1000;
   gx.save(); gx.translate(baseX,y);
-  // shadow (shrinks when jumping)
-  gx.fillStyle='rgba(0,0,0,0.35)'; gx.beginPath(); gx.ellipse(0,jh*H*0.22*0.0+6,s*1.1*(1-jh*0.5),s*0.3*(1-jh*0.4),0,0,7); gx.fill();
-  // running legs (alternate) unless jumping (tucked)
-  const stride = G.jump.active?0.2:Math.sin(t* (10+G.speed*0.5));
+  // shadow (shrinks when jumping, spreads when sliding)
+  gx.fillStyle='rgba(0,0,0,0.35)'; gx.beginPath(); gx.ellipse(0,6,s*1.1*(1-jh*0.5)*(1+da*0.4),s*0.3*(1-jh*0.4),0,0,7); gx.fill();
+  // slide: squash toward the feet (crouch/slide) & stretch a bit forward
+  if(da>0){ gx.translate(0,s*0.6); gx.scale(1+0.35*da,1-0.55*da); gx.translate(0,-s*0.6); }
+  // running legs (alternate) unless airborne (tucked)
+  const stride = (G.jump.active||G.duck.active)?0.2:Math.sin(t* (10+G.speed*0.5));
   gx.strokeStyle='#2a2140'; gx.lineWidth=s*0.34; gx.lineCap='round';
   gx.beginPath(); gx.moveTo(-s*0.18,-s*0.1); gx.lineTo(-s*0.18+stride*s*0.5, s*0.6 - (G.jump.active?s*0.3:0)); gx.stroke();
   gx.beginPath(); gx.moveTo( s*0.18,-s*0.1); gx.lineTo( s*0.18-stride*s*0.5, s*0.6 - (G.jump.active?s*0.3:0)); gx.stroke();
@@ -768,10 +836,19 @@ function frame(ts){
       ? 'hold it… <b>'+Math.round(pct*100)+'%</b>' : '✌️ <b>Show a peace sign</b> to start';
     if(G.gesture.hold>=GESTURE_HOLD) startGame();
   }
+  // game over: hold a 🧍 T-pose to restart
+  if(G.screen==='over'){
+    if(G.gesture.tpose) G.gesture.tHold += dt;
+    else G.gesture.tHold = Math.max(0, G.gesture.tHold - dt*2);
+    const pct=clamp(G.gesture.tHold/GESTURE_HOLD,0,1);
+    $('restartHint').innerHTML = G.gesture.tpose
+      ? 'hold the T… <b>'+Math.round(pct*100)+'%</b>' : '🧍 <b>Make a T-shape</b> to restart';
+    if(G.gesture.tHold>=GESTURE_HOLD) startGame();
+  }
   drawGame();
   if(G.screen==='play') updateHud();
   if(G.screen==='play'){
-    camStatus = G.body.seen ? 'tracking ✓  ·  step = lane · jump = hop · run = boost'
+    camStatus = G.body.seen ? 'tracking ✓ · step=lane · jump=hop · duck=slide · run=boost'
                             : '⚠ step back — I can\'t see your full body';
   }
   requestAnimationFrame(frame);
