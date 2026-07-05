@@ -110,24 +110,25 @@ function feedHand(h){ CURRENT_HAND=h; try{ HANDS.cb && HANDS.cb({multiHandLandma
   frames(45);   // ~0.7s of holding -> should cross GESTURE_HOLD and start
   if(GS.screen!=='play') errors.push('holding ✌️ did not start the game (screen='+GS.screen+')');
 
-  // simulate: user steps to THEIR right -> appears on image-left (small rawX) -> lane 2
-  feed(bodyLandmarks(0.12,0.55)); frames(4);
+  // pose position is smoothed, so hold each stance for several frames (realistic)
+  function hold(lm,n){ for(let i=0;i<(n||10);i++){ feed(lm); frames(2); } }
+  // user steps to THEIR right -> appears on image-left (small rawX) -> lane 2
+  hold(bodyLandmarks(0.12,0.55));
   if(GS.lane!==2) errors.push('stepping right did not move to lane 2 (lane='+GS.lane+')');
   // step back to centre
-  feed(bodyLandmarks(0.5,0.55)); frames(4);
+  hold(bodyLandmarks(0.5,0.55));
   if(GS.lane!==1) errors.push('returning to centre did not reach lane 1 (lane='+GS.lane+')');
   // user steps to THEIR left -> appears image-right (large rawX) -> lane 0 (the reported bug)
-  feed(bodyLandmarks(0.88,0.55)); frames(4);
+  hold(bodyLandmarks(0.88,0.55));
   if(GS.lane!==0) errors.push('stepping left did not move to lane 0 (lane='+GS.lane+')');
-  feed(bodyLandmarks(0.5,0.55)); frames(4);
-  // establish baseline then jump (hips rise: y 0.55 -> 0.44)
-  feed(bodyLandmarks(0.5,0.55)); feed(bodyLandmarks(0.5,0.55));
-  feed(bodyLandmarks(0.5,0.44));
+  hold(bodyLandmarks(0.5,0.55), 30);   // re-centre and let the jump baseline settle
+  // now jump: hips rise sharply
+  feed(bodyLandmarks(0.5,0.40));
   if(!GS.jump.active) errors.push('rising body did not trigger a jump');
   frames(20);
 
   // running in place should raise boost over time
-  for(let i=0;i<12;i++){ feed(bodyLandmarks(0.5, i%2? 0.55:0.58)); frames(2); }
+  for(let i=0;i<14;i++){ feed(bodyLandmarks(0.5, i%2? 0.55:0.59)); frames(2); }
 
   // force a crash: a tall block in the player's lane crossing the hit plane
   GS.jump.active=false;

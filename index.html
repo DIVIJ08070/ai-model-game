@@ -230,6 +230,9 @@ function pickLaneOffset(off, cur, step, h){
   if(off > -(step-h) && off < (step-h)) return 1;    // came back near centre
   return cur;                                        // in the hysteresis band -> hold
 }
+// How far (in mirrored-x, 0..1) you must move off centre to switch lane. Scales with
+// shoulder width so one real side-step triggers a lane change whether near or far.
+function laneStep(shoulderW){ return clamp(shoulderW*0.7, 0.055, 0.16); }
 // Jump trigger: body rose above baseline by more than an adaptive threshold
 // (threshold scales with torso length so it works near or far from the camera).
 function jumpThreshold(torsoLen){ return clamp(0.34*torsoLen, 0.045, 0.13); }
@@ -255,7 +258,7 @@ function isVictory(h){
   return spread/size > 0.30;                             // a V, not two fingers together
 }
 if(typeof module!=='undefined'&&module.exports){
-  module.exports={pickLane,pickLaneOffset,jumpThreshold,isJumpTrigger,runningLevel,isVictory,clamp,lerp};
+  module.exports={pickLane,pickLaneOffset,laneStep,jumpThreshold,isJumpTrigger,runningLevel,isVictory,clamp,lerp};
 }
 
 /* --------------------------------- audio --------------------------------- */
@@ -311,7 +314,7 @@ const G={
   // world
   obstacles:[], spawnTimer:0, dist:0, score:0, speed:0, baseSpeed:0, boost:0,
   // body signals
-  body:{seen:false, x:0.5, baseX:0.5, prevY:0.5, baseY:0.5, torso:0.25, runLevel:0, lastLm:null},
+  body:{seen:false, x:0.5, baseX:0.5, step:0.11, prevY:0.5, baseY:0.5, torso:0.25, runLevel:0, lastLm:null},
   poseLm:null, camBig:false,
   // start-gesture (ready lobby)
   handLm:null, gesture:{victory:false, hold:0},
@@ -397,42 +400,45 @@ function onPoseResults(res){
   const lm=res.poseLandmarks;
   G.poseLm = lm||null;          // stored; the panel is drawn on the game canvas
   if(!lm){ G.body.seen=false; return; }
-  // key points
-  const vis=i=>lm[i]&&(lm[i].visibility===undefined||lm[i].visibility>0.4);
-  const need=[11,12,23,24];
-  const ok=need.every(vis);
-  G.body.seen=ok;
-  if(!ok) return;
-  const avg=(idxs,key)=>{ let s=0,n=0; idxs.forEach(i=>{ if(lm[i]){s+=lm[i][key];n++;} }); return n?s/n:0; };
-  const rawX=avg([11,12,23,24],'x');
-  const mirX=1-rawX;                                   // mirrored to match selfie view
-  const hipY=avg([23,24],'y');
-  const shoY=avg([11,12],'y');
-  const torso=Math.abs(hipY-shoY);
-  G.body.x=mirX; G.body.torso=torso;
-  // running energy from legs
+  const vis=i=>lm[i]&&(lm[i].visibility===undefined||lm[i].visibility>0.5);
+  // SHOULDERS are the anchor: almost always visible & stable. We only need them
+  // to steer, so controls don't freeze when your legs/hips leave the frame.
+  if(!(vis(11)&&vis(12))){ G.body.seen=false; return; }
+  G.body.seen=true;
+  const shoX=(lm[11].x+lm[12].x)/2, shoY=(lm[11].y+lm[12].y)/2;
+  const shoulderW=Math.max(0.04, Math.abs(lm[11].x-lm[12].x));   // ~ body size in frame
+  const mirX=1-shoX;                                             // mirrored (selfie)
+  G.body.x = lerp(G.body.x, mirX, 0.6);                          // light de-jitter
+  // vertical anchor for jumps: hips if visible, else shoulders; torso for scaling
+  const hipsOk=vis(23)&&vis(24);
+  const anchorY = hipsOk ? (lm[23].y+lm[24].y)/2 : shoY;
+  const torso = hipsOk ? Math.abs(anchorY-shoY) : shoulderW*1.6;
+  // a lane step scales with body size (one real side-step ≈ constant, near or far)
+  const step = laneStep(shoulderW);
+  G.body.step = step; G.body.torso=torso;
+  // running energy from legs (0 if legs unseen — boost just won't fill)
   if(G.body.lastLm){
-    let e=0; [25,26,27,28].forEach(i=>{ if(lm[i]&&G.body.lastLm[i]) e+=Math.abs(lm[i].y-G.body.lastLm[i].y); });
+    let e=0; [25,26,27,28].forEach(i=>{ if(lm[i]&&G.body.lastLm[i]&&vis(i)) e+=Math.abs(lm[i].y-G.body.lastLm[i].y); });
     G.body.runLevel = lerp(G.body.runLevel, runningLevel(e, torso), 0.4);
   }
   G.body.lastLm=lm.map(p=>({x:p.x,y:p.y}));
   // ---- drive the game ----
   if(G.screen==='play' && G.running){
-    // lane: measured as an offset from your OWN learned neutral centre. Adapt the
-    // neutral only while you're in the middle lane so a held side-step doesn't drift.
-    if(G.lane===1) G.body.baseX = lerp(G.body.baseX, mirX, 0.05);
-    const nl=pickLaneOffset(mirX - G.body.baseX, G.lane, 0.11, 0.035);
+    // lane = which zone your body sits in, relative to your OWN learned centre.
+    // Adapt the neutral only while you're in the middle lane (so a held side-step
+    // doesn't drift), and a touch faster than before so it tracks you well.
+    if(G.lane===1) G.body.baseX = lerp(G.body.baseX, G.body.x, 0.08);
+    const nl=pickLaneOffset(G.body.x - G.body.baseX, G.lane, step, step*0.35);
     if(nl!==G.lane){ G.lane=nl; Sound.lane(); updateLaneDots(); }
     // jump (adaptive baseline while grounded)
     if(!G.jump.active && G.jumpCooldown<=0){
-      if(isJumpTrigger(hipY, G.body.prevY, G.body.baseY, torso)){ triggerJump(); }
+      if(isJumpTrigger(anchorY, G.body.prevY, G.body.baseY, torso)){ triggerJump(); }
     }
-    // baseline follows the body slowly, but not while airborne
-    if(!G.jump.active) G.body.baseY = lerp(G.body.baseY, hipY, 0.06);
-    G.body.prevY=hipY;
+    if(!G.jump.active) G.body.baseY = lerp(G.body.baseY, anchorY, 0.06);
+    G.body.prevY=anchorY;
   } else {
     // not playing: keep learning the neutral standing position
-    G.body.baseX=mirX; G.body.baseY=hipY; G.body.prevY=hipY;
+    G.body.baseX=G.body.x; G.body.baseY=anchorY; G.body.prevY=anchorY;
   }
 }
 
@@ -460,13 +466,27 @@ function drawCamPanel(){
   if(G.screen==='ready'){
     status = drawReadyOverlay(x,y,w,h);
   } else {
-    // lane guide lines (thirds) + current-lane highlight
-    gx.fillStyle='rgba(94,224,255,0.14)'; gx.fillRect(x+w*G.lane/3,y,w/3,h);
-    gx.strokeStyle='rgba(94,224,255,0.6)'; gx.lineWidth=2; gx.setLineDash([7,7]);
-    for(let i=1;i<3;i++){ gx.beginPath(); gx.moveTo(x+w*i/3,y); gx.lineTo(x+w*i/3,y+h); gx.stroke(); }
+    // trigger zones relative to YOUR learned centre: two dashed lines at baseX±step
+    // mark where a lane change fires; a bright marker shows your live position.
+    const bx=G.body.baseX, st=G.body.step;
+    const toX=mx=>x+clamp(mx,0,1)*w;                 // mirrored-x -> panel x
+    const lL=toX(bx-st), lR=toX(bx+st);
+    // highlight the current lane's zone
+    gx.fillStyle='rgba(94,224,255,0.16)';
+    if(G.lane===0) gx.fillRect(x,y,lL-x,h);
+    else if(G.lane===2) gx.fillRect(lR,y,x+w-lR,h);
+    else gx.fillRect(lL,y,lR-lL,h);
+    // threshold lines
+    gx.strokeStyle='rgba(94,224,255,0.7)'; gx.lineWidth=2; gx.setLineDash([7,7]);
+    [lL,lR].forEach(lx=>{ gx.beginPath(); gx.moveTo(lx,y); gx.lineTo(lx,y+h); gx.stroke(); });
     gx.setLineDash([]);
-    gx.font='700 12px Trebuchet MS'; gx.fillStyle='rgba(255,255,255,0.6)';
-    ['LEFT','CENTER','RIGHT'].forEach((t,i)=>gx.fillText(t, x+w*(i+0.5)/3, y+15));
+    // live body-position marker
+    const mx=toX(G.body.x);
+    gx.strokeStyle=G.lane===1?'#5ee0ff':'#3ef0a0'; gx.lineWidth=3;
+    gx.beginPath(); gx.moveTo(mx,y+18); gx.lineTo(mx,y+h-24); gx.stroke();
+    gx.fillStyle=gx.strokeStyle; gx.beginPath(); gx.arc(mx,y+h*0.5,5,0,7); gx.fill();
+    gx.font='700 12px Trebuchet MS'; gx.fillStyle='rgba(255,255,255,0.65)';
+    gx.fillText('◄ LEFT', x+ (lL-x)/2, y+15); gx.fillText('RIGHT ►', lR+(x+w-lR)/2, y+15);
     if(lm){
       const px=i=>x+(1-lm[i].x)*w, py=i=>y+lm[i].y*h;
       gx.lineWidth=4; gx.strokeStyle='rgba(255,93,162,0.95)'; gx.lineCap='round'; gx.beginPath();

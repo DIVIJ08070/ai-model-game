@@ -65,9 +65,13 @@ sign** (hold it ~0.6s) or press **▶ Start** to begin.
 Each webcam frame, MediaPipe returns 33 body landmarks. The game reduces them to a
 few stable signals (all in `tests/logic.test.js`):
 
-- **Lane** — the horizontal centre of your shoulders+hips (mirrored to match the
-  selfie view) is split into thirds, with a **dead-zone (hysteresis)** around the
-  boundaries so small wobbles don't flip lanes.
+- **Lane** — your **shoulder centre** (the most reliable, always-in-frame landmark;
+  hips are noisy and often cropped) relative to a **neutral you set by standing still**.
+  Step past a trigger line either side to switch lane; the trigger distance **scales
+  with your body size** so one real side-step works whether you're near or far, and a
+  **dead-zone (hysteresis)** stops wobbles from flipping lanes. The camera panel draws
+  both trigger lines and a live marker of your position so you can see exactly how far
+  to step.
 - **Jump** — a jump fires when your hips rise above an **auto-calibrated baseline**
   by more than a threshold that **scales with your torso size**, so it works
   whether you're close to or far from the camera.
