@@ -10,6 +10,14 @@ function pickLaneOffset(off,cur,step,h){ step=(step==null)?0.11:step; h=(h==null
 function jumpThreshold(t){ return clamp(0.34*t,0.045,0.13); }
 function isJumpTrigger(curY,prevY,baseY,t){ const th=jumpThreshold(t); return (baseY-curY)>th && curY<prevY; }
 function runningLevel(e,t){ const n=t>0?e/t:0; return clamp(n/0.9,0,1); }
+function isVictory(h){ if(!h||h.length<21) return false;
+  const up=(t,p)=>(h[p].y-h[t].y)>0.04;
+  const index=up(8,6),middle=up(12,10),ring=up(16,14),pinky=up(20,18);
+  if(!(index&&middle)||ring||pinky) return false;
+  const spread=Math.hypot(h[8].x-h[12].x,h[8].y-h[12].y);
+  const size=Math.hypot(h[0].x-h[9].x,h[0].y-h[9].y)+1e-6;
+  return spread/size>0.30; }
+function mkHand(spec){ const h=Array.from({length:21},()=>({x:0.5,y:0.5})); for(const k in spec) h[k]=spec[k]; return h; }
 
 let pass=0,fail=0;
 const ok=(n,c,d)=>{ c?(pass++,console.log('  ✓ '+n)):(fail++,console.log('  ✗ '+n+'  — '+d)); };
@@ -60,6 +68,27 @@ ok('no leg motion -> 0 boost', runningLevel(0,0.25)===0);
 ok('strong leg motion -> capped at 1', runningLevel(1.0,0.25)===1);
 ok('moderate motion -> partial boost', runningLevel(0.11,0.25)>0.4 && runningLevel(0.11,0.25)<0.6,
    'got '+runningLevel(0.11,0.25));
+
+// ---- ✌️ victory / peace sign detector ----
+const VICTORY=mkHand({ 0:{x:0.5,y:0.9}, 9:{x:0.5,y:0.58},
+  5:{x:0.44,y:0.6}, 6:{x:0.42,y:0.5}, 8:{x:0.40,y:0.35},   // index up + out
+  10:{x:0.5,y:0.48}, 12:{x:0.5,y:0.33},                    // middle up
+  14:{x:0.55,y:0.6}, 16:{x:0.55,y:0.64},                   // ring folded
+  18:{x:0.6,y:0.62}, 20:{x:0.6,y:0.66} });                 // pinky folded
+const FIST=mkHand({ 0:{x:0.5,y:0.9}, 9:{x:0.5,y:0.58},
+  6:{x:0.44,y:0.55},8:{x:0.44,y:0.6}, 10:{x:0.5,y:0.55},12:{x:0.5,y:0.6},
+  14:{x:0.55,y:0.55},16:{x:0.55,y:0.6}, 18:{x:0.6,y:0.55},20:{x:0.6,y:0.6} });
+const OPEN=mkHand({ 0:{x:0.5,y:0.9}, 9:{x:0.5,y:0.58},
+  6:{x:0.44,y:0.5},8:{x:0.42,y:0.35}, 10:{x:0.5,y:0.48},12:{x:0.5,y:0.33},
+  14:{x:0.55,y:0.48},16:{x:0.56,y:0.33}, 18:{x:0.6,y:0.5},20:{x:0.62,y:0.36} });
+const TOGETHER=mkHand({ 0:{x:0.5,y:0.9}, 9:{x:0.5,y:0.58},
+  6:{x:0.49,y:0.5},8:{x:0.49,y:0.35}, 10:{x:0.51,y:0.48},12:{x:0.51,y:0.33},
+  14:{x:0.55,y:0.6},16:{x:0.55,y:0.64}, 18:{x:0.6,y:0.62},20:{x:0.6,y:0.66} });
+ok('✌️ peace sign is recognised', isVictory(VICTORY)===true);
+ok('fist is NOT a peace sign', isVictory(FIST)===false);
+ok('open palm is NOT a peace sign', isVictory(OPEN)===false);
+ok('two fingers held together is NOT a peace sign', isVictory(TOGETHER)===false);
+ok('no hand -> not a peace sign', isVictory(null)===false && isVictory([])===false);
 
 console.log('\n'+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);

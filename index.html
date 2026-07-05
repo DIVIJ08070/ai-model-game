@@ -54,6 +54,17 @@
   #jumpChip{ opacity:0.35; transition:opacity .1s, transform .08s; }
   #jumpChip.fire{ opacity:1; transform:scale(1.12); color:var(--good); border-color:var(--good); }
 
+  /* ready lobby */
+  #readyBar{
+    position:absolute; left:50%; bottom:24px; transform:translateX(-50%);
+    z-index:9; display:flex; flex-direction:column; gap:12px; align-items:center;
+  }
+  .chip.big{ font-size:17px; padding:11px 20px; }
+  .chip.big b{ color:var(--lane); }
+  #startBtn{ width:auto; padding:12px 26px; font-size:18px; }
+  .btn.go{ background:linear-gradient(180deg,var(--good),#1fa877); color:#062018; box-shadow:0 6px 0 #14624a; }
+  .btn.go:active{ box-shadow:0 2px 0 #14624a; }
+
   .btnrow{ position:absolute; top:12px; right:12px; }
   /* moved right btns to left of campanel when panel visible */
   #topbtns{ position:absolute; top:12px; left:50%; transform:translateX(-50%); z-index:9; display:flex; gap:8px; }
@@ -130,6 +141,12 @@
     <button class="iconbtn" id="camBtn" title="Enlarge camera">🔍</button>
   </div>
 
+  <!-- ready lobby: gesture OR button to start -->
+  <div id="readyBar" class="hidden" style="display:none">
+    <div class="chip big" id="readyHint">✌️ <b>Show a peace sign</b> to start</div>
+    <button class="btn go" id="startBtn">▶ Start now</button>
+  </div>
+
   <!-- control feedback -->
   <div id="feedback" class="hidden" style="display:none">
     <div class="chip"><span class="lanedots"><span class="ld" id="ld0"></span><span class="ld on" id="ld1"></span><span class="ld" id="ld2"></span></span></div>
@@ -154,8 +171,8 @@
         <button data-diff="normal" aria-pressed="true">Normal</button>
         <button data-diff="intense">Intense</button>
       </div>
-      <button class="btn" id="playBtn">▶ ENABLE CAMERA &amp; PLAY</button>
-      <div class="loadwrap hidden" id="loadWrap"><span class="spinner"></span><span id="loadMsg">Loading pose model…</span></div>
+      <button class="btn" id="playBtn">▶ ENABLE CAMERA</button>
+      <div class="loadwrap hidden" id="loadWrap"><span class="spinner"></span><span id="loadMsg">Loading models…</span></div>
       <div class="err hidden" id="errMsg"></div>
       <div class="best">Best score: <b id="bestStart">0</b></div>
     </div>
@@ -177,8 +194,9 @@
   </div>
 </div>
 
-<!-- MediaPipe Pose (CDN). Real full-body skeleton tracking. -->
+<!-- MediaPipe Pose (body skeleton for gameplay) + Hands (✌️ start gesture). CDN. -->
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 <script>
 "use strict";
 /* =========================================================================
@@ -224,8 +242,20 @@ function runningLevel(energy, torsoLen){
   const norm = torsoLen>0 ? energy/(torsoLen) : 0;
   return clamp(norm/0.9, 0, 1);
 }
+// ✌️ Victory / peace sign from 21 MediaPipe Hand landmarks: index + middle fingers
+// extended (up), ring + pinky folded (down), and the two up-fingers spread apart.
+// Assumes the hand is held roughly upright (how people naturally flash a peace sign).
+function isVictory(h){
+  if(!h || h.length<21) return false;
+  const up=(tip,pip)=> (h[pip].y - h[tip].y) > 0.04;   // tip clearly above its knuckle
+  const index=up(8,6), middle=up(12,10), ring=up(16,14), pinky=up(20,18);
+  if(!(index && middle) || ring || pinky) return false; // only index+middle up
+  const spread=Math.hypot(h[8].x-h[12].x, h[8].y-h[12].y);
+  const size=Math.hypot(h[0].x-h[9].x, h[0].y-h[9].y)+1e-6; // wrist->middle-knuckle
+  return spread/size > 0.30;                             // a V, not two fingers together
+}
 if(typeof module!=='undefined'&&module.exports){
-  module.exports={pickLane,pickLaneOffset,jumpThreshold,isJumpTrigger,runningLevel,clamp,lerp};
+  module.exports={pickLane,pickLaneOffset,jumpThreshold,isJumpTrigger,runningLevel,isVictory,clamp,lerp};
 }
 
 /* --------------------------------- audio --------------------------------- */
@@ -283,9 +313,12 @@ const G={
   // body signals
   body:{seen:false, x:0.5, baseX:0.5, prevY:0.5, baseY:0.5, torso:0.25, runLevel:0, lastLm:null},
   poseLm:null, camBig:false,
+  // start-gesture (ready lobby)
+  handLm:null, gesture:{victory:false, hold:0},
   jumpCooldown:0,
   shake:0, flash:0,
 };
+const GESTURE_HOLD=0.6; // seconds a ✌️ must be held to start
 
 /* --------------------------- projection helpers -------------------------- */
 function horizonY(){ return H*0.40; }
@@ -296,33 +329,62 @@ function halfRoad(pf){ return lerp(W*0.03, W*0.44, pf); }
 function laneCenterX(laneIdx, pf){ return W*0.5 + (laneIdx-1)*halfRoad(pf)*0.62; }
 
 /* -------------------------------- camera --------------------------------- */
-let pose=null, camStream=null, poseReady=false, sending=false;
+let pose=null, hands=null, camStream=null, initialized=false, sending=false;
+let poseSeen=false, handsSeen=false;
 async function initCameraAndPose(){
-  if(typeof Pose==='undefined') throw new Error('Pose library did not load — check your internet connection (needed once to download the model).');
+  if(typeof Pose==='undefined' || typeof Hands==='undefined')
+    throw new Error('Tracking libraries did not load — check your internet connection (needed once to download the models).');
   // camera
   camStream=await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'user', width:{ideal:640}, height:{ideal:480} }, audio:false });
   video.srcObject=camStream; await video.play().catch(()=>{});
-  // pose
+  // pose (body -> gameplay)
   pose=new Pose({ locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}` });
   pose.setOptions({ modelComplexity:1, smoothLandmarks:true, enableSegmentation:false,
     minDetectionConfidence:0.5, minTrackingConfidence:0.5 });
   pose.onResults(onPoseResults);
-  // warm-up: send one frame and wait for first result
-  await new Promise((res)=>{
-    const once=()=>{ poseReady=true; res(); };
-    const orig=onPoseHooks.first; onPoseHooks.first=()=>{ orig&&orig(); once(); };
-    pumpPose();
-  });
+  // hands (✌️ -> start gesture)
+  hands=new Hands({ locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
+  hands.setOptions({ maxNumHands:1, modelComplexity:0, minDetectionConfidence:0.6, minTrackingConfidence:0.5 });
+  hands.onResults(onHandsResults);
+  // warm both models so the lobby & first round are responsive
+  $('loadMsg').textContent='Warming up body tracking…';
+  await warmUp(()=>pose.send({image:video}), ()=>poseSeen);
+  $('loadMsg').textContent='Warming up gesture…';
+  await warmUp(()=>hands.send({image:video}), ()=>handsSeen);
+  initialized=true;
+  startPump();
 }
-const onPoseHooks={first:null};
-async function pumpPose(){
-  if(!pose) return;
-  if(!sending && video.readyState>=2){
-    sending=true;
-    try{ await pose.send({image:video}); }catch(e){}
-    sending=false;
+async function warmUp(sendOnce, done){
+  for(let i=0;i<150 && !done();i++){
+    if(video.readyState>=2){ try{ await sendOnce(); }catch(e){} }
+    if(done()) break;
+    await new Promise(r=>requestAnimationFrame(r));
   }
-  requestAnimationFrame(pumpPose);
+}
+// single detector pump — routes each frame to the model the current screen needs
+async function startPump(){
+  async function loop(){
+    if(!sending && video.readyState>=2){
+      sending=true;
+      try{
+        if(G.screen==='ready' && hands) await hands.send({image:video});
+        else if((G.screen==='play'||G.screen==='over') && pose) await pose.send({image:video});
+      }catch(e){}
+      sending=false;
+    }
+    requestAnimationFrame(loop);
+  }
+  loop();
+}
+
+// hand-skeleton connections (21-landmark MediaPipe Hands)
+const HCON=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],
+  [9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+function onHandsResults(res){
+  handsSeen=true;
+  const list=res.multiHandLandmarks;
+  if(list && list.length){ G.handLm=list[0]; G.gesture.victory=isVictory(list[0]); }
+  else { G.handLm=null; G.gesture.victory=false; }
 }
 
 // skeleton connections (BlazePose indices) for the "structure frame"
@@ -331,7 +393,7 @@ const CON=[[11,12],[11,23],[12,24],[23,24],[11,13],[13,15],[12,14],[14,16],
   [15,17],[15,19],[15,21],[16,18],[16,20],[16,22],[0,11],[0,12]];
 
 function onPoseResults(res){
-  if(onPoseHooks.first){ const f=onPoseHooks.first; onPoseHooks.first=null; f(); }
+  poseSeen=true;
   const lm=res.poseLandmarks;
   G.poseLm = lm||null;          // stored; the panel is drawn on the game canvas
   if(!lm){ G.body.seen=false; return; }
@@ -393,37 +455,61 @@ function drawCamPanel(){
     gx.drawImage(video,(w-dw)/2,(h-dh)/2,dw,dh); gx.restore();
   } else { gx.fillStyle='#05070f'; gx.fillRect(x,y,w,h); }
   gx.restore();  // <-- unclip immediately; overlays below draw within panelRect anyway
-  // lane guide lines (thirds) + current-lane highlight
-  const laneIdx = G.screen==='play'? G.lane : pickLane(G.body.x,1,0.05);
-  gx.fillStyle='rgba(94,224,255,0.14)'; gx.fillRect(x+w*laneIdx/3,y,w/3,h);
-  gx.strokeStyle='rgba(94,224,255,0.6)'; gx.lineWidth=2; gx.setLineDash([7,7]);
-  for(let i=1;i<3;i++){ gx.beginPath(); gx.moveTo(x+w*i/3,y); gx.lineTo(x+w*i/3,y+h); gx.stroke(); }
-  gx.setLineDash([]);
-  // L / C / R labels
-  gx.font='700 12px Trebuchet MS'; gx.textAlign='center'; gx.textBaseline='alphabetic';
-  gx.fillStyle='rgba(255,255,255,0.6)';
-  ['LEFT','CENTER','RIGHT'].forEach((t,i)=>gx.fillText(t, x+w*(i+0.5)/3, y+15));
-  // skeleton + joints (mirrored coords in panel space)
-  if(lm){
-    const px=i=>x+(1-lm[i].x)*w, py=i=>y+lm[i].y*h;
-    gx.lineWidth=4; gx.strokeStyle='rgba(255,93,162,0.95)'; gx.lineCap='round'; gx.beginPath();
-    CON.forEach(([a,b])=>{ if(lm[a]&&lm[b]){ gx.moveTo(px(a),py(a)); gx.lineTo(px(b),py(b)); } });
-    gx.stroke();
-    gx.fillStyle='#5ee0ff';
-    [0,11,12,13,14,15,16,23,24,25,26,27,28].forEach(i=>{ if(lm[i]){ gx.beginPath(); gx.arc(px(i),py(i),4,0,7); gx.fill(); } });
-    let minx=1,miny=1,maxx=0,maxy=0;
-    lm.forEach(p=>{ if(p.visibility===undefined||p.visibility>0.4){ minx=Math.min(minx,p.x);maxx=Math.max(maxx,p.x);miny=Math.min(miny,p.y);maxy=Math.max(maxy,p.y);} });
-    gx.strokeStyle='rgba(62,240,160,0.9)'; gx.lineWidth=2; gx.setLineDash([6,5]);
-    gx.strokeRect(x+(1-maxx)*w, y+miny*h, (maxx-minx)*w, (maxy-miny)*h); gx.setLineDash([]);
+  gx.textAlign='center'; gx.textBaseline='alphabetic';
+  let status;
+  if(G.screen==='ready'){
+    status = drawReadyOverlay(x,y,w,h);
+  } else {
+    // lane guide lines (thirds) + current-lane highlight
+    gx.fillStyle='rgba(94,224,255,0.14)'; gx.fillRect(x+w*G.lane/3,y,w/3,h);
+    gx.strokeStyle='rgba(94,224,255,0.6)'; gx.lineWidth=2; gx.setLineDash([7,7]);
+    for(let i=1;i<3;i++){ gx.beginPath(); gx.moveTo(x+w*i/3,y); gx.lineTo(x+w*i/3,y+h); gx.stroke(); }
+    gx.setLineDash([]);
+    gx.font='700 12px Trebuchet MS'; gx.fillStyle='rgba(255,255,255,0.6)';
+    ['LEFT','CENTER','RIGHT'].forEach((t,i)=>gx.fillText(t, x+w*(i+0.5)/3, y+15));
+    if(lm){
+      const px=i=>x+(1-lm[i].x)*w, py=i=>y+lm[i].y*h;
+      gx.lineWidth=4; gx.strokeStyle='rgba(255,93,162,0.95)'; gx.lineCap='round'; gx.beginPath();
+      CON.forEach(([a,b])=>{ if(lm[a]&&lm[b]){ gx.moveTo(px(a),py(a)); gx.lineTo(px(b),py(b)); } });
+      gx.stroke();
+      gx.fillStyle='#5ee0ff';
+      [0,11,12,13,14,15,16,23,24,25,26,27,28].forEach(i=>{ if(lm[i]){ gx.beginPath(); gx.arc(px(i),py(i),4,0,7); gx.fill(); } });
+      let minx=1,miny=1,maxx=0,maxy=0;
+      lm.forEach(p=>{ if(p.visibility===undefined||p.visibility>0.4){ minx=Math.min(minx,p.x);maxx=Math.max(maxx,p.x);miny=Math.min(miny,p.y);maxy=Math.max(maxy,p.y);} });
+      gx.strokeStyle='rgba(62,240,160,0.9)'; gx.lineWidth=2; gx.setLineDash([6,5]);
+      gx.strokeRect(x+(1-maxx)*w, y+miny*h, (maxx-minx)*w, (maxy-miny)*h); gx.setLineDash([]);
+    }
+    status = camStatus||'stand back so your whole body shows';
   }
   // status strip
   gx.fillStyle='rgba(0,0,0,0.6)'; gx.fillRect(x,y+h-22,w,22);
   gx.font='700 11px Trebuchet MS';
-  gx.fillStyle=(camStatus.indexOf('step back')>=0)?'#ffd23f':'#9fe8c9';
-  gx.fillText(camStatus||'stand back so your whole body shows', x+w/2, y+h-7);
+  gx.fillStyle=(status.indexOf('step back')>=0||status.indexOf('show')>=0)?'#ffd23f':'#9fe8c9';
+  gx.fillText(status, x+w/2, y+h-7);
   // glowing border
   gx.strokeStyle='rgba(94,224,255,0.75)'; gx.lineWidth=3; roundRect(x,y,w,h,16); gx.stroke();
   gx.restore();
+}
+// lobby overlay: draw the hand skeleton + a ✌️ hold-progress ring; returns status text
+function drawReadyOverlay(x,y,w,h){
+  const hl=G.handLm;
+  if(hl){
+    const px=i=>x+(1-hl[i].x)*w, py=i=>y+hl[i].y*h;
+    const col=G.gesture.victory?'#3ef0a0':'rgba(94,224,255,0.9)';
+    gx.lineWidth=3; gx.strokeStyle=col; gx.lineCap='round'; gx.beginPath();
+    HCON.forEach(([a,b])=>{ if(hl[a]&&hl[b]){ gx.moveTo(px(a),py(a)); gx.lineTo(px(b),py(b)); } });
+    gx.stroke();
+    gx.fillStyle=col;
+    for(let i=0;i<21;i++){ gx.beginPath(); gx.arc(px(i),py(i),3,0,7); gx.fill(); }
+  }
+  // hold-progress ring, centre of panel
+  const p=clamp(G.gesture.hold/GESTURE_HOLD,0,1);
+  if(p>0){
+    const cx=x+w/2, cy=y+h*0.42, r=26;
+    gx.lineWidth=6; gx.strokeStyle='rgba(255,255,255,0.18)'; gx.beginPath(); gx.arc(cx,cy,r,0,7); gx.stroke();
+    gx.strokeStyle='#3ef0a0'; gx.beginPath(); gx.arc(cx,cy,r,-Math.PI/2,-Math.PI/2+p*Math.PI*2,false); gx.stroke();
+  }
+  return G.gesture.victory ? 'hold it… ✌️ starting' : (hl? '✌️ make a peace sign' : '✋ show your hand to the camera');
 }
 
 /* --------------------------------- game ---------------------------------- */
@@ -446,6 +532,14 @@ function spawnObstacle(){
   });
   // guarantee at least one open lane by not spawning >2
 }
+// ready lobby: camera on, watching for the ✌️ start gesture (or the Start button)
+function enterReady(){
+  G.screen='ready'; G.gesture.hold=0; G.gesture.victory=false; G.handLm=null;
+  show('startScreen',false); show('overScreen',false);
+  show('hud',false); show('feedback',false);
+  show('readyBar',true); show('topbtns',true);
+  resize();
+}
 function startGame(){
   Sound.start();
   const d=DIFF[G.diffKey];
@@ -453,9 +547,10 @@ function startGame(){
   G.lane=1; G.laneX=0; G.jump.active=false; G.jump.t=0; G.jumpCooldown=0;
   G.body.baseX=G.body.x;  // lock in your current stance as the neutral centre
   G.baseSpeed=d.speed; G.speed=d.speed;
+  G.gesture.hold=0; G.gesture.victory=false;
   G.running=true; G.screen='play';
   updateLaneDots();
-  show('startScreen',false); show('overScreen',false);
+  show('startScreen',false); show('overScreen',false); show('readyBar',false);
   show('hud',true); show('feedback',true); show('topbtns',true);
   resize();
 }
@@ -545,8 +640,8 @@ function drawGame(){
   const list=[...G.obstacles].sort((a,b)=>b.z-a.z);
   for(const o of list) drawObstacle(o);
   drawPlayer();
-  // camera panel (only while a session is active)
-  if(G.screen==='play'||G.screen==='over') drawCamPanel();
+  // camera panel (lobby + active session)
+  if(G.screen==='ready'||G.screen==='play'||G.screen==='over') drawCamPanel();
   // flash
   if(G.flash>0){ gx.fillStyle='rgba(255,50,80,'+(0.5*G.flash)+')'; gx.fillRect(0,0,W,H); }
   gx.setTransform(DPR,0,0,DPR,0,0);
@@ -644,9 +739,17 @@ let last=0;
 function frame(ts){
   const dt=Math.min(0.05,(last?ts-last:16)/1000); last=ts;
   update(dt);
+  // ready lobby: hold ✌️ to start (brief dropouts don't fully reset the ring)
+  if(G.screen==='ready'){
+    if(G.gesture.victory) G.gesture.hold += dt;
+    else G.gesture.hold = Math.max(0, G.gesture.hold - dt*2);
+    const pct=clamp(G.gesture.hold/GESTURE_HOLD,0,1);
+    $('readyHint').innerHTML = G.gesture.victory
+      ? 'hold it… <b>'+Math.round(pct*100)+'%</b>' : '✌️ <b>Show a peace sign</b> to start';
+    if(G.gesture.hold>=GESTURE_HOLD) startGame();
+  }
   drawGame();
   if(G.screen==='play') updateHud();
-  // camera-not-seen hint (drawn onto the overlay via camStatus)
   if(G.screen==='play'){
     camStatus = G.body.seen ? 'tracking ✓  ·  step = lane · jump = hop · run = boost'
                             : '⚠ step back — I can\'t see your full body';
@@ -657,13 +760,14 @@ function frame(ts){
 /* ------------------------------- controls -------------------------------- */
 $('playBtn').addEventListener('click',async()=>{
   Sound.on();
+  if(initialized){ enterReady(); return; }   // camera/models already up -> straight to lobby
   $('errMsg').classList.add('hidden');
   $('loadWrap').classList.remove('hidden');
   $('playBtn').disabled=true;
   try{
     await initCameraAndPose();
     $('loadWrap').classList.add('hidden'); $('playBtn').disabled=false;
-    startGame();
+    enterReady();
   }catch(e){
     $('loadWrap').classList.add('hidden'); $('playBtn').disabled=false;
     const msg=(e&&e.name==='NotAllowedError')?'Camera permission was blocked. Allow camera access and try again.':
@@ -672,8 +776,9 @@ $('playBtn').addEventListener('click',async()=>{
     const el=$('errMsg'); el.textContent='⚠ '+msg; el.classList.remove('hidden');
   }
 });
+$('startBtn').addEventListener('click',()=>{ if(G.screen==='ready') startGame(); });
 $('againBtn').addEventListener('click',()=>{ show('overScreen',false); startGame(); });
-$('homeBtn').addEventListener('click',()=>{ show('overScreen',false); show('hud',false); show('feedback',false); show('topbtns',false); G.screen='start'; show('startScreen',true); $('bestStart').textContent=G.best; });
+$('homeBtn').addEventListener('click',()=>{ show('overScreen',false); show('hud',false); show('feedback',false); show('readyBar',false); show('topbtns',false); G.screen='start'; show('startScreen',true); $('bestStart').textContent=G.best; });
 $('muteBtn').addEventListener('click',()=>{ const m=!Sound.isMuted(); Sound.setMuted(m); $('muteBtn').textContent=m?'🔇':'🔊'; if(!m)Sound.on(); });
 $('camBtn').addEventListener('click',()=>{ G.camBig=!G.camBig; });
 document.querySelectorAll('#diffRow button').forEach(b=>b.addEventListener('click',()=>{

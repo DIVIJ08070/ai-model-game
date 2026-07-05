@@ -8,6 +8,8 @@ real movements into the game:
 - **Jump in real life** → the runner hops over low barriers.
 - **Run in place** → fills a boost bar for extra speed & score (your runner turns green).
 - **Tall blocks can't be jumped** → you have to *dodge* them into another lane.
+- **Start hands-free** → in the lobby, hold up a ✌️ **peace sign** for ~0.6s to begin
+  (or just press the **▶ Start** button).
 
 The camera panel (top-right) shows your live video with your **skeleton drawn on
 you**, a **body box**, and **two lane-divider lines** with your current lane
@@ -22,8 +24,8 @@ from a CDN, which does the real skeleton tracking.
 
 - A **webcam**.
 - A modern browser (**Chrome/Edge recommended**).
-- **Internet on first load** — MediaPipe downloads a small pose model the first
-  time (then it's cached by the browser).
+- **Internet on first load** — MediaPipe downloads two small models the first time
+  (Pose for the body + Hands for the ✌️ start gesture); both are then browser-cached.
 - A bit of **space**: stand back ~2–3 m so the camera can see you head-to-toe.
 
 ---
@@ -40,8 +42,9 @@ cd ~/Desktop/body-runner
 python3 -m http.server 8000
 ```
 
-Then open **http://localhost:8000** in Chrome, click **“ENABLE CAMERA & PLAY”**,
-and **allow the camera** when prompted.
+Then open **http://localhost:8000** in Chrome, click **“ENABLE CAMERA”**, and
+**allow the camera** when prompted. You land in a short lobby — flash a ✌️ **peace
+sign** (hold it ~0.6s) or press **▶ Start** to begin.
 
 > **Playing on a phone instead?** Phone browsers also require a secure context and
 > block the camera over a plain `http://<ip>` address — you'd need HTTPS (a
@@ -80,7 +83,7 @@ Difficulty (and each moment you survive) ramps the world speed and spawn rate.
 Pure logic, no dependencies:
 
 ```bash
-node tests/logic.test.js      # lane hysteresis, adaptive jump threshold, run cadence
+node tests/logic.test.js      # lane hysteresis, adaptive jump threshold, run cadence, ✌️ detector
 node tests/runtime.smoke.js   # boots the whole game in a DOM/pose shim and drives a
                               # full round (camera init → lane → jump → boost → crash)
 ```

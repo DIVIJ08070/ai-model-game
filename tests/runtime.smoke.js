@@ -39,10 +39,18 @@ const cache={};
 const byId=id=>cache[id]||(cache[id]=el(id));
 const diffBtns=['chill','normal','intense'].map(d=>{ const b=el('d-'+d); b.dataset.diff=d; return b; });
 
-// capture the pose callback the game registers
-const POSE={cb:null};
+// capture the pose + hands callbacks the game registers
+const POSE={cb:null}, HANDS={cb:null};
 class PoseStub{ constructor(){} setOptions(){} onResults(cb){ this.cb=cb; POSE.cb=cb; }
   async send(){ if(this.cb) this.cb(makeResult(CURRENT_LM)); } close(){} }
+class HandsStub{ constructor(){} setOptions(){} onResults(cb){ this.cb=cb; HANDS.cb=cb; }
+  async send(){ if(this.cb) this.cb({multiHandLandmarks:CURRENT_HAND?[CURRENT_HAND]:[]}); } close(){} }
+let CURRENT_HAND=null;
+function victoryHand(){ const h=Array.from({length:21},()=>({x:0.5,y:0.5}));
+  const s=(i,x,y)=>h[i]={x,y};
+  s(0,0.5,0.9);s(9,0.5,0.58);s(5,0.44,0.6);s(6,0.42,0.5);s(8,0.40,0.35);
+  s(10,0.5,0.48);s(12,0.5,0.33);s(14,0.55,0.6);s(16,0.55,0.64);s(18,0.6,0.62);s(20,0.6,0.66);
+  return h; }
 
 // build a plausible 33-point landmark set; x,y in [0,1]
 function makeResult(lm){ return {poseLandmarks:lm}; }
@@ -70,7 +78,7 @@ const win={ innerWidth:1280, innerHeight:720, devicePixelRatio:2,
   matchMedia:()=>({matches:false}), AudioContext:AudioCtx, webkitAudioContext:AudioCtx,
   addEventListener(){}, requestAnimationFrame:fn=>{ rafq.push(fn); return rafq.length; } };
 
-const sandbox={ window:win, document, localStorage, Pose:PoseStub,
+const sandbox={ window:win, document, localStorage, Pose:PoseStub, Hands:HandsStub,
   navigator:{ vibrate:()=>true, mediaDevices:{ getUserMedia:async()=>({ getTracks:()=>[{stop(){}}] }) } },
   performance:{ now:()=>clock },
   requestAnimationFrame:win.requestAnimationFrame,
@@ -84,16 +92,23 @@ catch(e){ console.error('boot threw:',e.stack); process.exit(1); }
 
 function frames(n,stepMs){ stepMs=stepMs||16; for(let i=0;i<n;i++){ clock+=stepMs; try{ sandbox.frame(clock); }catch(e){ errors.push('frame: '+e.stack); } } }
 function feed(lm){ CURRENT_LM=lm; try{ POSE.cb && POSE.cb(makeResult(lm)); }catch(e){ errors.push('pose: '+e.stack); } }
+function feedHand(h){ CURRENT_HAND=h; try{ HANDS.cb && HANDS.cb({multiHandLandmarks:h?[h]:[]}); }catch(e){ errors.push('hands: '+e.stack); } }
 
 (async()=>{
   frames(3);                               // boot frames on start screen
-  byId('playBtn')._fire('click');          // ENABLE CAMERA & PLAY (async)
+  byId('playBtn')._fire('click');          // ENABLE CAMERA (async: camera + models)
   await new Promise(r=>setTimeout(r,0)); await Promise.resolve(); await Promise.resolve();
-  // small settle
+  await new Promise(r=>setTimeout(r,0)); await Promise.resolve();
   frames(2);
   const GS=sandbox.__api&&sandbox.__api.G;
   if(!GS){ console.log('RUNTIME ERRORS:\n could not reach game state (__api missing)'); process.exit(1); }
-  if(GS.screen!=='play'){ errors.push('did not enter play after camera init (screen='+GS.screen+')'); }
+  if(GS.screen!=='ready'){ errors.push('did not enter the ready lobby after camera init (screen='+GS.screen+')'); }
+
+  // ✌️ start gesture: show a peace sign, hold it -> auto-starts the game
+  feedHand(victoryHand());
+  if(!GS.gesture.victory) errors.push('peace sign not recognised in lobby');
+  frames(45);   // ~0.7s of holding -> should cross GESTURE_HOLD and start
+  if(GS.screen!=='play') errors.push('holding ✌️ did not start the game (screen='+GS.screen+')');
 
   // simulate: user steps to THEIR right -> appears on image-left (small rawX) -> lane 2
   feed(bodyLandmarks(0.12,0.55)); frames(4);
