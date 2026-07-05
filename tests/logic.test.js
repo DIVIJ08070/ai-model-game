@@ -4,6 +4,9 @@ const clamp=(v,a,b)=>v<a?a:(v>b?b:v);
 function pickLane(x,cur,h){ h=(h==null)?0.06:h;
   if(x<1/3-h) return 0; if(x>2/3+h) return 2;
   if(x>1/3+h && x<2/3-h) return 1; return cur; }
+function pickLaneOffset(off,cur,step,h){ step=(step==null)?0.11:step; h=(h==null)?0.035:h;
+  if(off<=-step) return 0; if(off>=step) return 2;
+  if(off>-(step-h)&&off<(step-h)) return 1; return cur; }
 function jumpThreshold(t){ return clamp(0.34*t,0.045,0.13); }
 function isJumpTrigger(curY,prevY,baseY,t){ const th=jumpThreshold(t); return (baseY-curY)>th && curY<prevY; }
 function runningLevel(e,t){ const n=t>0?e/t:0; return clamp(n/0.9,0,1); }
@@ -23,6 +26,22 @@ ok('crossing well past boundary does switch', pickLane(0.26,1)===0);
 let cur=1, flips=0;
 for(const x of [0.34,0.36,0.34,0.36,0.34]){ const nl=pickLane(x,cur); if(nl!==cur) flips++; cur=nl; }
 ok('jitter near boundary produces no lane flips', flips===0, 'flips='+flips);
+
+// ---- self-centred (offset) lane picker: the SYMMETRY fix ----
+// left and right require the exact same-sized step from your neutral centre,
+// regardless of where "neutral" actually is.
+ok('offset: step left triggers lane 0', pickLaneOffset(-0.12,1)===0);
+ok('offset: step right triggers lane 2', pickLaneOffset(0.12,1)===2);
+ok('offset: left and right are symmetric', pickLaneOffset(-0.12,1)===0 && pickLaneOffset(0.12,1)===2);
+ok('offset: small drift holds centre', pickLaneOffset(-0.05,1)===1 && pickLaneOffset(0.05,1)===1);
+ok('offset: returning past hysteresis re-centres', pickLaneOffset(-0.05,0)===1);
+ok('offset: still-out-there holds the side lane (hysteresis)', pickLaneOffset(-0.09,0)===0);
+// a right-of-camera neutral (baseX=0.62) must reach LEFT with the same step as right
+const baseX=0.62;
+ok('offset fix: left reachable even when standing right-of-centre',
+   pickLaneOffset((0.50)-baseX, 1)===0, 'off='+((0.50)-baseX).toFixed(3));
+ok('offset fix: right reachable from the same neutral',
+   pickLaneOffset((0.74)-baseX, 1)===2, 'off='+((0.74)-baseX).toFixed(3));
 
 // ---- jump threshold adapts to distance (torso size) ----
 ok('threshold clamps low when very close (big torso)', jumpThreshold(0.6)===0.13);

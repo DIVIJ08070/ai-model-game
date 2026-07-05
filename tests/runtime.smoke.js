@@ -101,6 +101,10 @@ function feed(lm){ CURRENT_LM=lm; try{ POSE.cb && POSE.cb(makeResult(lm)); }catc
   // step back to centre
   feed(bodyLandmarks(0.5,0.55)); frames(4);
   if(GS.lane!==1) errors.push('returning to centre did not reach lane 1 (lane='+GS.lane+')');
+  // user steps to THEIR left -> appears image-right (large rawX) -> lane 0 (the reported bug)
+  feed(bodyLandmarks(0.88,0.55)); frames(4);
+  if(GS.lane!==0) errors.push('stepping left did not move to lane 0 (lane='+GS.lane+')');
+  feed(bodyLandmarks(0.5,0.55)); frames(4);
   // establish baseline then jump (hips rise: y 0.55 -> 0.44)
   feed(bodyLandmarks(0.5,0.55)); feed(bodyLandmarks(0.5,0.55));
   feed(bodyLandmarks(0.5,0.44));

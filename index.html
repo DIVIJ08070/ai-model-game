@@ -202,6 +202,16 @@ function pickLane(x, cur, h){
   if(x > 1/3 + h && x < 2/3 - h) return 1;
   return cur; // near a boundary -> hold
 }
+// Preferred lane picker: from the SIGNED offset of your body from your OWN learned
+// neutral centre. Symmetric left/right regardless of where you stand or how the
+// webcam is framed. `step` = how far to move to trigger a side lane; `h` = hysteresis.
+function pickLaneOffset(off, cur, step, h){
+  step=(step==null)?0.11:step; h=(h==null)?0.035:h;
+  if(off <= -step) return 0;                         // stepped left
+  if(off >=  step) return 2;                         // stepped right
+  if(off > -(step-h) && off < (step-h)) return 1;    // came back near centre
+  return cur;                                        // in the hysteresis band -> hold
+}
 // Jump trigger: body rose above baseline by more than an adaptive threshold
 // (threshold scales with torso length so it works near or far from the camera).
 function jumpThreshold(torsoLen){ return clamp(0.34*torsoLen, 0.045, 0.13); }
@@ -215,7 +225,7 @@ function runningLevel(energy, torsoLen){
   return clamp(norm/0.9, 0, 1);
 }
 if(typeof module!=='undefined'&&module.exports){
-  module.exports={pickLane,jumpThreshold,isJumpTrigger,runningLevel,clamp,lerp};
+  module.exports={pickLane,pickLaneOffset,jumpThreshold,isJumpTrigger,runningLevel,clamp,lerp};
 }
 
 /* --------------------------------- audio --------------------------------- */
@@ -271,7 +281,7 @@ const G={
   // world
   obstacles:[], spawnTimer:0, dist:0, score:0, speed:0, baseSpeed:0, boost:0,
   // body signals
-  body:{seen:false, x:0.5, prevY:0.5, baseY:0.5, torso:0.25, runLevel:0, lastLm:null},
+  body:{seen:false, x:0.5, baseX:0.5, prevY:0.5, baseY:0.5, torso:0.25, runLevel:0, lastLm:null},
   poseLm:null, camBig:false,
   jumpCooldown:0,
   shake:0, flash:0,
@@ -346,8 +356,10 @@ function onPoseResults(res){
   G.body.lastLm=lm.map(p=>({x:p.x,y:p.y}));
   // ---- drive the game ----
   if(G.screen==='play' && G.running){
-    // lane
-    const nl=pickLane(mirX, G.lane, 0.055);
+    // lane: measured as an offset from your OWN learned neutral centre. Adapt the
+    // neutral only while you're in the middle lane so a held side-step doesn't drift.
+    if(G.lane===1) G.body.baseX = lerp(G.body.baseX, mirX, 0.05);
+    const nl=pickLaneOffset(mirX - G.body.baseX, G.lane, 0.11, 0.035);
     if(nl!==G.lane){ G.lane=nl; Sound.lane(); updateLaneDots(); }
     // jump (adaptive baseline while grounded)
     if(!G.jump.active && G.jumpCooldown<=0){
@@ -357,7 +369,8 @@ function onPoseResults(res){
     if(!G.jump.active) G.body.baseY = lerp(G.body.baseY, hipY, 0.06);
     G.body.prevY=hipY;
   } else {
-    G.body.baseY=hipY; G.body.prevY=hipY;
+    // not playing: keep learning the neutral standing position
+    G.body.baseX=mirX; G.body.baseY=hipY; G.body.prevY=hipY;
   }
 }
 
@@ -438,6 +451,7 @@ function startGame(){
   const d=DIFF[G.diffKey];
   G.obstacles.length=0; G.spawnTimer=0; G.dist=0; G.score=0; G.boost=0;
   G.lane=1; G.laneX=0; G.jump.active=false; G.jump.t=0; G.jumpCooldown=0;
+  G.body.baseX=G.body.x;  // lock in your current stance as the neutral centre
   G.baseSpeed=d.speed; G.speed=d.speed;
   G.running=true; G.screen='play';
   updateLaneDots();
