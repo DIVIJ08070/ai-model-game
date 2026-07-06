@@ -44,6 +44,18 @@ except ImportError:
 
 
 # ============================ output backends ============================
+class PrintOutput:
+    """No game needed: just prints what it *would* send. Great first test —
+    checks the whole webcam -> pose -> gesture pipeline with zero permissions."""
+
+    def send(self, action):
+        arrow = {'left': '← LEFT', 'right': '→ RIGHT', 'up': '↑ JUMP', 'down': '↓ DUCK'}[action]
+        print("  " + arrow, flush=True)
+
+    def describe(self):
+        return "console (test mode - prints actions, sends nothing)"
+
+
 class KeyOutput:
     """Presses arrow keys (BlueStacks/LDPlayer keymapping, or an arrow-key web game)."""
 
@@ -125,7 +137,8 @@ def visible(lm, i, thr=0.5):
 
 def main():
     ap = argparse.ArgumentParser(description="Body Dash -> real game bridge")
-    ap.add_argument("--backend", choices=["keys", "adb"], default="keys")
+    ap.add_argument("--backend", choices=["print", "keys", "adb"], default="print",
+                    help="print = test mode (no game); keys = emulator/web arrows; adb = real phone")
     ap.add_argument("--camera", type=int, default=0, help="webcam index")
     ap.add_argument("--screen", help="phone WxH for adb (else auto-detected), e.g. 1080x2400")
     ap.add_argument("--cooldown", type=float, default=0.35, help="min seconds between jump/duck")
@@ -138,7 +151,12 @@ def main():
     if args.screen:
         w, h = args.screen.lower().split("x")
         scr = (int(w), int(h))
-    out = AdbOutput(screen=scr) if args.backend == "adb" else KeyOutput()
+    if args.backend == "adb":
+        out = AdbOutput(screen=scr)
+    elif args.backend == "keys":
+        out = KeyOutput()
+    else:
+        out = PrintOutput()
 
     cap = cv2.VideoCapture(args.camera)
     if not cap.isOpened():
