@@ -1,0 +1,5 @@
+# Body Dash desktop bridge.
+# Use a Python 3.9–3.12 virtualenv (MediaPipe wheels may not exist on 3.13+).
+mediapipe>=0.10,<0.11
+opencv-python>=4.8
+pynput>=1.7

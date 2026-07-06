@@ -1,1 +1,4 @@
 .DS_Store
+bridge/venv/
+__pycache__/
+*.pyc
