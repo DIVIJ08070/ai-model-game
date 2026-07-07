@@ -2,3 +2,7 @@
 bridge/venv/
 __pycache__/
 *.pyc
+node_modules/
+.vercel/
+.env
+.env.local

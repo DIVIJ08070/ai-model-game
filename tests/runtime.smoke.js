@@ -108,11 +108,32 @@ function feedHand(h){ CURRENT_HAND=h; try{ HANDS.cb && HANDS.cb({multiHandLandma
   if(!GS){ console.log('RUNTIME ERRORS:\n could not reach game state (__api missing)'); process.exit(1); }
   if(GS.screen!=='ready'){ errors.push('did not enter the ready lobby after camera init (screen='+GS.screen+')'); }
 
-  // ✌️ start gesture: show a peace sign, hold it -> auto-starts the game
+  // ✌️ start gesture: show a peace sign, hold it -> enters calibration
   feedHand(victoryHand());
   if(!GS.gesture.victory) errors.push('peace sign not recognised in lobby');
-  frames(45);   // ~0.7s of holding -> should cross GESTURE_HOLD and start
-  if(GS.screen!=='play') errors.push('holding ✌️ did not start the game (screen='+GS.screen+')');
+  frames(45);   // ~0.7s of holding -> crosses GESTURE_HOLD -> calibration
+  if(GS.screen!=='calib' && GS.screen!=='play') errors.push('holding ✌️ did not begin calibration (screen='+GS.screen+')');
+  // guided calibration: perform each cued action (still -> jump -> step -> duck) so the
+  // game measures and personalises the triggers, then auto-starts the run.
+  const calibStep=()=> (GS.screen==='calib'&&GS.calib) ? GS.calib.steps[GS.calib.idx] : GS.screen;
+  let saw={jump:false,lane:false,duck:false}, guard=0;
+  while(GS.screen!=='play' && guard++<600){
+    const stp=calibStep();
+    if(stp==='jump'){ saw.jump=true; feed(bodyLandmarks(0.5,0.40)); }        // hop: hips rise
+    else if(stp==='lane'){ saw.lane=true; feed(bodyLandmarks(0.12,0.55)); }  // step to a side
+    else if(stp==='duck'){ saw.duck=true; feed(bodyLandmarks(0.5,0.72)); }   // crouch: hips drop
+    else feed(bodyLandmarks(0.5,0.55));                                      // 'still' / 'ready'
+    frames(2);
+  }
+  if(GS.screen!=='play') errors.push('guided calibration did not reach play (screen='+GS.screen+', step='+calibStep()+')');
+  if(!(saw.jump&&saw.lane&&saw.duck)) errors.push('guided calibration skipped a step: '+JSON.stringify(saw));
+  if(!(GS.body.step>0)) errors.push('calibration did not set a personalised lane step');
+  if(!(GS.body.jumpTh>0)) errors.push('calibration did not measure a jump threshold');
+  if(!(GS.body.duckTh>0)) errors.push('calibration did not measure a duck threshold');
+
+  // isolate the control tests below from RANDOM obstacle spawns (they test the
+  // pose->intent logic, not collision; the collision tests push obstacles explicitly).
+  GS.spawnTimer=1e9; GS.obstacles.length=0;
 
   // pose position is smoothed, so hold each stance for several frames (realistic)
   function hold(lm,n){ for(let i=0;i<(n||10);i++){ feed(lm); frames(2); } }
@@ -147,6 +168,18 @@ function feedHand(h){ CURRENT_HAND=h; try{ HANDS.cb && HANDS.cb({multiHandLandma
   frames(6);
   if(GS.screen!=='play') errors.push('ducking did not clear the overhead bar (screen='+GS.screen+')');
 
+  // breakable crate: a raised, fast wrist jab SMASHES it (or you'd have to dodge)
+  GS.jump.active=false; GS.duck.active=false; GS.spawnTimer=999; GS.obstacles.length=0; GS.punchCooldown=0;
+  function punchPose(handX){ const lm=bodyLandmarks(0.5,0.55);      // shoulders ~0.33, torso ~0.22
+    lm[15]={x:handX,y:0.30,visibility:1}; lm[16]={x:1-handX,y:0.30,visibility:1}; return lm; }
+  feed(punchPose(0.38));                        // fist raised (establishes the previous frame)
+  feed(punchPose(0.60));                        // thrust fast across -> punch
+  if(!GS.punch.active) errors.push('a raised, fast wrist jab did not register as a punch');
+  GS.obstacles.push({lane:GS.lane, z:0.6, type:'breakable', passed:false, coin:false, dead:false});
+  frames(8);
+  if(GS.screen!=='play') errors.push('punching did not smash the breakable crate (screen='+GS.screen+')');
+  if(GS.obstacles.length!==0) errors.push('smashed crate was not removed ('+GS.obstacles.length+' left)');
+
   // force a crash: a tall block (can't jump/duck) in the player's lane
   GS.jump.active=false; GS.duck.active=false; GS.obstacles.length=0;
   GS.obstacles.push({lane:GS.lane, z:0.7, type:'block', passed:false, coin:false});
@@ -157,6 +190,31 @@ function feedHand(h){ CURRENT_HAND=h; try{ HANDS.cb && HANDS.cb({multiHandLandma
   // 🧍 T-pose restarts from the game-over screen
   feed(tposeLandmarks()); frames(45);
   if(GS.screen!=='play') errors.push('T-pose did not restart from game over (screen='+GS.screen+')');
+
+  // an UNPUNCHED breakable crate is a crash — you must smash or dodge it
+  GS.punch.active=false; GS.punchCooldown=0; GS.jump.active=false; GS.duck.active=false;
+  GS.spawnTimer=999; GS.obstacles.length=0;
+  GS.obstacles.push({lane:GS.lane, z:0.7, type:'breakable', passed:false, coin:false, dead:false});
+  frames(30);
+  await new Promise(r=>setTimeout(r,0));
+  if(GS.screen!=='over') errors.push('an unpunched breakable crate did not crash (screen='+GS.screen+')');
+
+  // ---- KEYBOARD control scheme: play with no camera; discrete lane / jump / duck / punch ----
+  GS.control='keyboard';
+  sandbox.startGame(false);
+  if(GS.screen!=='play') errors.push('keyboard startGame did not reach play (screen='+GS.screen+')');
+  GS.spawnTimer=1e9; GS.obstacles.length=0;                 // isolate control checks from spawns
+  sandbox.doLane(1);  if(GS.lane!==2) errors.push('keyboard lane-right failed (lane='+GS.lane+')');
+  sandbox.doLane(-1); sandbox.doLane(-1); if(GS.lane!==0) errors.push('keyboard lane-left failed (lane='+GS.lane+')');
+  GS.jump.active=false; GS.jumpCooldown=0; sandbox.triggerJump();
+  if(!GS.jump.active) errors.push('keyboard jump failed');
+  GS.jump.active=false; GS.duck.active=false; GS.duckCooldown=0; sandbox.triggerDuck();
+  if(!GS.duck.active) errors.push('keyboard duck failed');
+  GS.punchCooldown=0; sandbox.triggerPunch();
+  if(!GS.punch.active) errors.push('keyboard punch failed');
+  // boost via held flag feeds the boost meter (no run-in-place needed)
+  GS.boostHeld=true; for(let i=0;i<40;i++){ sandbox.frame((clock+=16)); }
+  if(!(GS.boost>0.3)) errors.push('held-boost did not raise the boost meter (boost='+GS.boost.toFixed(2)+')');
 
   if(errors.length){ console.log('RUNTIME ERRORS:\n'+errors.join('\n')); process.exit(1); }
   console.log('runtime smoke: boot + camera-init + lane + jump + boost + crash all ran with no errors');

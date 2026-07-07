@@ -1,0 +1,15 @@
+{
+  "name": "body-dash",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Body Dash — a webcam + keyboard/touch motion endless runner with a serverless leaderboard (Vercel + Postgres).",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node tests/logic.test.js && node tests/runtime.smoke.js && node tests/api.test.js"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  }
+}
