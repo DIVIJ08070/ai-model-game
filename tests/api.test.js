@@ -7,31 +7,39 @@ const Module = require('module');
 // ---- in-memory Postgres emulation -----------------------------------------
 let store = [];
 let seq = 0;
+// dedupe to one best row per (case-insensitive) name, optionally within a difficulty
+function dedup(diff, today) {
+  const m = new Map();
+  for (const r of store) {
+    if (diff != null && r.diff !== diff) continue;
+    if (today && r.ts.getTime() < 1700000000000) continue;
+    const k = r.name.toLowerCase();
+    if (!m.has(k) || r.score > m.get(k).score) m.set(k, r);
+  }
+  return [...m.values()];
+}
 function fakeQuery(sql, params) {
   params = params || [];
   if (/CREATE TABLE|CREATE INDEX/.test(sql)) return Promise.resolve({ rows: [] });
   if (/INSERT INTO scores/.test(sql)) {
     const [name, score, diff, dist] = params;
-    const row = { id: ++seq, name, score, diff, dist, ts: new Date(1700000000000 + seq) };
-    store.push(row);
-    return Promise.resolve({ rows: [{ id: row.id }] });
+    store.push({ id: ++seq, name, score, diff, dist, ts: new Date(1700000000000 + seq) });
+    return Promise.resolve({ rows: [] });
   }
-  if (/AS rank/.test(sql)) {
-    const [score, newId, diff] = params;
-    const count = store.filter(r => r.diff === diff && (r.score > score || (r.score === score && r.id < newId))).length;
+  if (/AS rank/.test(sql)) {                 // rank the player's best among distinct-name bests
+    const [best, diff] = params;
+    const count = dedup(diff, false).filter(r => r.score > best).length;
     return Promise.resolve({ rows: [{ rank: count + 1 }] });
   }
-  if (/AS best/.test(sql)) {
+  if (/AS best/.test(sql)) {                 // player's best (case-insensitive)
     const [name, diff] = params;
-    const mine = store.filter(r => r.name === name && r.diff === diff).map(r => r.score);
+    const mine = store.filter(r => r.name.toLowerCase() === String(name).toLowerCase() && r.diff === diff).map(r => r.score);
     return Promise.resolve({ rows: [{ best: mine.length ? Math.max.apply(null, mine) : null }] });
   }
-  if (/FROM scores/.test(sql)) { // the GET list query
+  if (/DISTINCT ON|FROM scores/.test(sql)) { // GET: deduped board, top N by score
     const [diff, today, limit] = params;
-    const startToday = 1700000000000; // everything in-store is "today" for the test
-    let rows = store.filter(r => (diff === null || r.diff === diff) && (!today || r.ts.getTime() >= startToday));
-    rows.sort((a, b) => (b.score - a.score) || (a.ts - b.ts));
-    return Promise.resolve({ rows: rows.slice(0, limit) });
+    const rows = dedup(diff, today).sort((a, b) => (b.score - a.score) || (a.ts - b.ts)).slice(0, limit);
+    return Promise.resolve({ rows });
   }
   return Promise.resolve({ rows: [] });
 }
@@ -85,11 +93,17 @@ const ok = (n, c, d) => { c ? (pass++, console.log('  ✓ ' + n)) : (fail++, con
   ok('higher score -> rank 1', r.body.rank === 1);
 
   r = await call(h, { method: 'POST', body: { name: 'Ann', score: 50, diff: 'normal' } });
-  ok('lower score -> rank 3 (Bob250, Ann100, Ann50)', r.body.rank === 3);
-  ok("personal best stays 100 for Ann", r.body.best === 100);
+  ok('Ann second run (lower) -> best stays 100, rank 2 behind Bob', r.body.best === 100 && r.body.rank === 2);
 
   r = await call(h, { method: 'GET', url: '/api/scores?diff=normal' });
-  ok('GET sorted desc', r.body.scores.map(s => s.score).join(',') === '250,100,50');
+  ok('board dedupes by name -> Bob250, Ann100', r.body.scores.map(s => s.score).join(',') === '250,100');
+  ok('exactly ONE row per name (no duplicate Ann)', r.body.scores.filter(s => s.name.toLowerCase() === 'ann').length === 1);
+
+  r = await call(h, { method: 'POST', body: { name: 'ANN', score: 500, diff: 'normal' } });   // same name any-case, new best
+  ok('a new personal best updates that player -> rank 1, best 500', r.body.rank === 1 && r.body.best === 500);
+  r = await call(h, { method: 'GET', url: '/api/scores?diff=normal' });
+  ok('board now Ann500, Bob250 (still one Ann row)',
+     r.body.scores.map(s => s.score).join(',') === '500,250' && r.body.scores.filter(s => s.name.toLowerCase() === 'ann').length === 1);
 
   // ---- validation ----
   r = await call(h, { method: 'POST', body: { name: '', score: 10 } });

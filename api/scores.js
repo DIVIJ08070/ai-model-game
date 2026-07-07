@@ -128,12 +128,17 @@ module.exports = async function handler(req, res) {
       const diffParam = url.searchParams.get('diff');
       const diff = DIFFS.includes(diffParam) ? diffParam : null;   // null = all difficulties
       const today = url.searchParams.get('range') === 'today';
+      // One row per player (case-insensitive name), showing their BEST score.
       const { rows } = await pool.query(
-        `SELECT name, score, diff, dist, ts FROM scores
-          WHERE ($1::text IS NULL OR diff = $1)
-            AND ($2::bool = false OR ts >= date_trunc('day', now()))
-          ORDER BY score DESC, ts ASC
-          LIMIT $3`,
+        `SELECT name, score, diff, dist, ts FROM (
+           SELECT DISTINCT ON (lower(name)) name, score, diff, dist, ts
+             FROM scores
+            WHERE ($1::text IS NULL OR diff = $1)
+              AND ($2::bool = false OR ts >= date_trunc('day', now()))
+            ORDER BY lower(name), score DESC, ts ASC
+         ) t
+         ORDER BY score DESC, ts ASC
+         LIMIT $3`,
         [diff, today, TOP_N]
       );
       return sendJson(res, 200, { ok: true, configured: true,
@@ -153,14 +158,17 @@ module.exports = async function handler(req, res) {
       if (name === null) return sendJson(res, 400, { ok: false, error: `name must be a non-empty string up to ${NAME_MAX} characters.` });
       if (score === null) return sendJson(res, 400, { ok: false, error: `score must be an integer between 0 and ${MAX_SCORE}.` });
 
-      const ins = await pool.query(`INSERT INTO scores (name, score, diff, dist) VALUES ($1,$2,$3,$4) RETURNING id`, [name, score, diff, dist]);
-      const newId = ins.rows[0].id;
+      await pool.query(`INSERT INTO scores (name, score, diff, dist) VALUES ($1,$2,$3,$4)`, [name, score, diff, dist]);
+      // Rank the player's BEST among the deduped board (one best per name).
+      const bestRes = await pool.query(`SELECT max(score)::int AS best FROM scores WHERE lower(name) = lower($1) AND diff = $2`, [name, diff]);
+      const best = bestRes.rows[0].best;
       const rankRes = await pool.query(
-        `SELECT count(*)::int + 1 AS rank FROM scores WHERE diff = $3 AND (score > $1 OR (score = $1 AND id < $2))`,
-        [score, newId, diff]
+        `SELECT count(*)::int + 1 AS rank FROM (
+           SELECT max(score) AS best FROM scores WHERE diff = $2 GROUP BY lower(name)
+         ) t WHERE t.best > $1`,
+        [best, diff]
       );
-      const bestRes = await pool.query(`SELECT max(score)::int AS best FROM scores WHERE name = $1 AND diff = $2`, [name, diff]);
-      return sendJson(res, 200, { ok: true, configured: true, rank: rankRes.rows[0].rank, best: bestRes.rows[0].best });
+      return sendJson(res, 200, { ok: true, configured: true, rank: rankRes.rows[0].rank, best });
     }
 
     res.setHeader('Allow', 'GET, POST');
