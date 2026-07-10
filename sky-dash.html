@@ -1,0 +1,662 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="theme-color" content="#0c1022" />
+<title>Sky Dash</title>
+<!-- three.js importmap (View block only — must precede the module script). SPEC §3.2 -->
+<script type="importmap">{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}</script>
+<style>
+  /* ---- [ARCADE] :root tokens (verbatim from game3d.html line 9) + --bad ---- */
+  :root{ --bg:#0c1022; --ink:#eaf0ff; --lane:#5ee0ff; --accent:#ff5da2; --good:#3ef0a0; --warn:#ffd23f; --bad:#ff3b5c; }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ margin:0; height:100%; width:100%; overflow:hidden; position:fixed; inset:0; background:var(--bg); color:var(--ink);
+    font-family:'Trebuchet MS','Segoe UI',system-ui,-apple-system,sans-serif; -webkit-user-select:none; user-select:none; touch-action:none; }
+  #app{ position:fixed; inset:0; }
+  #c3d{ position:absolute; inset:0; display:block; width:100%; height:100%; }
+  .hidden{ display:none !important; }
+
+  /* ---- [NEW] back-link (DESIGN_SPEC §2.1) ---- */
+  #backLink{ position:fixed; top:12px; left:12px; z-index:30; display:inline-flex; align-items:center; gap:6px;
+    background:rgba(20,26,51,0.72); border:2px solid rgba(94,224,255,0.35); color:var(--lane); border-radius:12px;
+    padding:8px 12px; font-weight:800; font-size:13px; text-decoration:none; }
+  #backLink:hover{ border-color:var(--lane); background:rgba(94,224,255,0.14); }
+
+  /* ---- [ARCADE] HUD (game3d.html lines 16-28), shifted below the back-link ---- */
+  #hud{ position:absolute; top:56px; left:12px; z-index:7; display:flex; flex-direction:column; gap:8px; }
+  .stat{ background:rgba(20,26,51,0.72); border:2px solid rgba(255,255,255,0.12); border-radius:12px; padding:6px 12px; min-width:110px; }
+  .stat .k{ font-size:10px; letter-spacing:1.5px; text-transform:uppercase; opacity:0.65; font-weight:800; }
+  .stat .v{ font-size:22px; font-weight:900; line-height:1.05; font-variant-numeric:tabular-nums; }
+  #appleV{ color:var(--good); display:inline-block; transform-origin:left center; }
+  #appleV.pop{ animation:applepop .2s ease-out; }
+  @keyframes applepop{ 0%{ transform:scale(1);} 50%{ transform:scale(1.18);} 100%{ transform:scale(1);} }
+  #timeV.pulse{ animation:timepulse 1s ease-in-out infinite; }
+  @keyframes timepulse{ 0%,100%{ opacity:1;} 50%{ opacity:.55;} }
+  .mini{ display:flex; gap:8px; } .mini .stat{ min-width:0; }
+  #speedV{ color:var(--lane); }
+
+  /* ---- [ARCADE] feedback container + [NEW] chip internals (DESIGN_SPEC §3.3) ---- */
+  #feedback{ position:absolute; left:50%; bottom:16px; transform:translateX(-50%); z-index:7;
+    display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:center; max-width:94vw; }
+  .chip{ background:rgba(20,26,51,0.8); border:2px solid rgba(255,255,255,0.14); border-radius:999px; padding:8px 14px;
+    font-weight:800; font-size:14px; display:inline-flex; align-items:center; gap:8px; }
+  .chip.neutral{ opacity:0.55; } .chip.active{ opacity:1; border-color:rgba(94,224,255,0.55); }
+  .chip .cad{ width:64px; height:10px; border-radius:8px; background:rgba(0,0,0,0.4); overflow:hidden; }
+  .chip .cad>span{ display:block; height:100%; width:0%; background:linear-gradient(90deg,var(--warn),var(--good)); transition:width .18s ease-out; }
+  .axis{ position:relative; width:64px; height:10px; border-radius:8px; background:rgba(0,0,0,0.4); overflow:hidden; }
+  .axis .fillL,.axis .fillR,.axis .fillU,.axis .fillD{ position:absolute; top:0; height:100%; width:0%; transition:width .1s linear; }
+  .axis .fillL{ right:50%; background:var(--good); } .axis .fillR{ left:50%; background:var(--good); }
+  .axis .fillU{ left:0; background:var(--good); }   .axis .fillD{ left:0; background:var(--warn); }
+  .axis .mid{ position:absolute; left:50%; top:0; width:2px; height:100%; transform:translateX(-1px); background:rgba(255,255,255,0.5); }
+
+  /* ---- [NEW] altitude ribbon (DESIGN_SPEC §3.4) ---- */
+  #altRibbon{ position:absolute; right:12px; top:50%; transform:translateY(-50%); z-index:7; width:12px; height:180px;
+    border-radius:8px; background:rgba(20,26,51,0.72); border:2px solid rgba(255,255,255,0.14); overflow:hidden; }
+  #altRibbon>.fill{ position:absolute; left:0; bottom:0; width:100%; background:linear-gradient(180deg,var(--lane),var(--good)); transition:height .1s linear; }
+  #altRibbon>.danger{ position:absolute; left:0; bottom:0; width:100%; height:22%; background:rgba(255,59,92,0.30); }
+
+  /* ---- [ARCADE] webcam panel (DESIGN_SPEC §3.5) ---- */
+  #camWrap{ position:absolute; right:12px; bottom:12px; z-index:9; width:132px; height:99px; border-radius:12px; overflow:hidden;
+    border:2px solid rgba(94,224,255,0.55); box-shadow:0 6px 18px rgba(0,0,0,0.5); background:#05070f; }
+  #cam,#camOverlay{ position:absolute; inset:0; width:100%; height:100%; }
+  #cam{ object-fit:cover; transform:scaleX(-1); }
+
+  /* ---- [ARCADE] screens (game3d.html lines 33-45) ---- */
+  .screen{ position:absolute; inset:0; z-index:20; display:flex; align-items:center; justify-content:center; padding:20px; text-align:center;
+    background:radial-gradient(120% 120% at 50% 0%, rgba(124,92,255,0.22), rgba(12,16,34,0.9)); backdrop-filter:blur(3px); }
+  .card{ width:min(560px,94vw); background:rgba(16,21,43,0.92); border:3px solid rgba(94,224,255,0.35); border-radius:24px; padding:26px 22px;
+    box-shadow:0 18px 50px rgba(0,0,0,0.55); max-height:94dvh; overflow:auto; }
+  .title{ font-weight:900; line-height:0.92; margin:0 0 6px; }
+  .title .a{ display:block; font-size:clamp(30px,8vw,54px); color:var(--lane); -webkit-text-stroke:2px #08122a; paint-order:stroke fill; text-shadow:0 4px 0 #071026; }
+  .title .b{ display:block; font-size:clamp(30px,8vw,54px); color:var(--accent); -webkit-text-stroke:2px #08122a; paint-order:stroke fill; text-shadow:0 4px 0 #071026; }
+  .sub{ opacity:0.85; font-size:14px; margin:8px 0 16px; line-height:1.5; }
+  .btn{ appearance:none; border:none; border-radius:16px; cursor:pointer; font-family:inherit; font-weight:900; font-size:20px; padding:15px 22px; width:100%;
+    background:linear-gradient(180deg,var(--accent),#e0407f); color:#fff; box-shadow:0 6px 0 #7e1f47; letter-spacing:0.5px; }
+  .btn:active{ transform:translateY(4px); box-shadow:0 2px 0 #7e1f47; }
+  .btn.ghost{ background:transparent; border:2px solid rgba(255,255,255,0.3); color:var(--ink); box-shadow:none; }
+  .ctarow{ display:flex; gap:8px; margin-top:10px; } .ctarow .btn{ font-size:15px; padding:12px 8px; }
+  .linkbtn{ background:none; border:none; color:var(--lane); font-weight:800; font-size:14px; cursor:pointer; text-decoration:underline; text-underline-offset:3px; font-family:inherit; margin-top:12px; }
+  .mood{ font-size:19px; font-weight:900; margin:0 0 12px; }
+  .gostat{ display:flex; gap:10px; margin:14px 0 16px; }
+  .gostat .s{ flex:1; background:rgba(124,92,255,0.14); border:2px solid rgba(124,92,255,0.5); border-radius:14px; padding:10px 6px; }
+  .gostat .n{ font-size:26px; font-weight:900; color:#7c5cff; } .gostat .l{ font-size:10px; text-transform:uppercase; letter-spacing:1px; opacity:0.7; font-weight:800; }
+  .howtbl{ width:100%; border-collapse:collapse; font-size:13px; margin:6px 0 4px; } .howtbl th,.howtbl td{ border:1px solid rgba(255,255,255,0.1); padding:7px 8px; text-align:center; }
+  .howtbl th{ color:var(--lane); font-size:12px; } .howtbl td.act{ text-align:left; font-weight:800; }
+
+  /* ---- [NEW] focus-visible (DESIGN_SPEC §10/§11) ---- */
+  *:focus-visible{ outline:3px solid var(--lane); outline-offset:2px; }
+
+  /* ---- [NEW] responsive (DESIGN_SPEC §8) ---- */
+  @media (max-width:400px){
+    #feedback .cad,#feedback .axis{ width:48px; } #feedback .chip{ padding:6px 10px; }
+    #altRibbon{ display:none; } #backLink{ padding:10px 12px; }
+  }
+  @media (max-height:420px){ #camWrap{ bottom:64px; } }
+  @media (min-width:768px){ #camWrap{ width:160px; height:120px; } }
+
+  /* ---- [NEW] reduced motion (DESIGN_SPEC §11.2) ---- */
+  @media (prefers-reduced-motion: reduce){
+    #timeV.pulse,#appleV.pop{ animation:none; }
+    .chip .cad>span,.axis .fillL,.axis .fillR,.axis .fillU,.axis .fillD,#altRibbon>.fill{ transition:none; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="c3d"></canvas>
+
+  <!-- fixed back-to-arcade link (SPEC §8.2) -->
+  <a id="backLink" href="/">&larr; Arcade</a>
+
+  <!-- webcam panel: hidden <video> frame source + skeleton overlay (SPEC §8.2/§8.3) -->
+  <div id="camWrap" class="hidden">
+    <video id="cam" playsinline muted autoplay></video>
+    <canvas id="camOverlay" width="132" height="99" aria-hidden="true"></canvas>
+  </div>
+
+  <!-- in-game HUD (DESIGN_SPEC §3) -->
+  <div id="hud" class="hidden">
+    <div class="stat"><div class="k">Apples</div><div class="v" id="appleV" aria-live="polite">0/16</div></div>
+    <div class="stat"><div class="k">Time</div><div class="v" id="timeV" aria-live="polite">1:30</div></div>
+    <div class="mini">
+      <div class="stat"><div class="k">Speed</div><div class="v" id="speedV">1.0&times;</div></div>
+      <div class="stat"><div class="k">Alt</div><div class="v" id="altV">40m</div></div>
+    </div>
+  </div>
+
+  <!-- altitude ribbon (DESIGN_SPEC §3.4) -->
+  <div id="altRibbon" class="hidden" aria-hidden="true">
+    <div class="fill" id="altFill"></div>
+    <div class="danger"></div>
+  </div>
+
+  <!-- flight feedback chips (DESIGN_SPEC §3.3) -->
+  <div id="feedback" class="hidden">
+    <div class="chip neutral" id="chipFlap">&#129461; <span class="cad"><span id="flapBar"></span></span></div>
+    <div class="chip neutral" id="chipGlide">&#128330; <span id="glideVal">GLIDE</span></div>
+    <div class="chip neutral" id="chipBank">&#8646; <span class="axis"><span class="mid"></span><span class="fillL" id="bankL"></span><span class="fillR" id="bankR"></span></span> <span id="bankTxt">&mdash;</span></div>
+    <div class="chip neutral" id="chipPitch">&#8645; <span class="axis"><span class="mid"></span><span class="fillU" id="pitchU"></span><span class="fillD" id="pitchD"></span></span> <span id="pitchTxt">&mdash; LEVEL</span></div>
+  </div>
+
+  <!-- LOBBY (DESIGN_SPEC §2.2) -->
+  <div class="screen" id="lobbyScreen">
+    <div class="card">
+      <h1 class="title"><span class="a">SKY</span><span class="b">DASH</span></h1>
+      <div class="sub">Flap your arms like wings to fly. Strike a &#129485; T-pose (or press Play) to take off.</div>
+      <button class="btn" id="playKeysBtn">&#9654; Play (keyboard)</button>
+      <div class="ctarow"><button class="btn ghost" id="playCamBtn">&#128247; Camera</button></div>
+      <div id="camMsg" class="sub" style="text-align:center;color:var(--warn);min-height:1px;margin:10px 0 0"></div>
+      <button class="linkbtn" id="howToBtn">How to fly</button>
+      <div id="howto" class="hidden">
+        <table class="howtbl">
+          <tr><th>Move</th><th>&#127909; Camera</th><th>&#9000; Keys</th></tr>
+          <tr><td class="act">Flap (lift)</td><td>Wings down-stroke</td><td>Space / &#9650; / W</td></tr>
+          <tr><td class="act">Glide</td><td>Arms wide &amp; level</td><td>(auto when level)</td></tr>
+          <tr><td class="act">Bank right</td><td>Raise L / lower R hand</td><td>&#9654; / D</td></tr>
+          <tr><td class="act">Bank left</td><td>Raise R / lower L hand</td><td>&#9664; / A</td></tr>
+          <tr><td class="act">Dive</td><td>Tuck arms low</td><td>&#9660; / S</td></tr>
+        </table>
+        <div class="sub" style="margin:0">Bank = <b>lean into the turn</b>: raise your left / lower your right hand and the bird steers <b>&#9654; RIGHT</b>.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- GAME OVER / WIN (DESIGN_SPEC §2.4) -->
+  <div class="screen hidden" id="overScreen">
+    <div class="card">
+      <h1 class="title"><span class="a" id="overTitleA">TIME</span><span class="b" id="overTitleB">UP</span></h1>
+      <div id="overMood" class="mood">&#9201; Out of time.</div>
+      <div class="gostat">
+        <div class="s"><div class="n" id="overApples">0/16</div><div class="l">Apples</div></div>
+        <div class="s"><div class="n" id="overScore">0</div><div class="l">Score</div></div>
+        <div class="s"><div class="n" id="overBest">0</div><div class="l">Best</div></div>
+      </div>
+      <div id="newBest" class="hidden" style="color:var(--good);font-weight:900;margin-bottom:8px">&#127881; New personal best!</div>
+      <div class="sub">&#129485; T-pose to fly again</div>
+      <button class="btn" id="againBtn">&#9654; Play again</button>
+    </div>
+  </div>
+</div>
+
+<!-- ENGINE — classic, no three.js (SPEC 3.1). Smoke test extracts the block below by its sentinel. -->
+<script>
+/*__SKY_ENGINE__*/
+/* Sky Dash — Engine. Pure control math + G state machine + flight physics + collision +
+   game rules + calibration + pose/camera boot + keyboard fallback + skeleton overlay draw +
+   RAF loop. Contains NO three.js. The View (module block below) reads engine state via the
+   optional render hook window.__skyRender(dt,t). SPEC §3.1/§4/§9. */
+
+/* ---------------------------------- helpers ---------------------------------- */
+var clamp=function(v,a,b){ return v<a?a:(v>b?b:v); };
+var lerp=function(a,b,t){ return a+(b-a)*t; };
+var sign=function(x){ return x>0?1:(x<0?-1:0); };
+var $=function(id){ return (typeof document!=='undefined'&&document.getElementById)?document.getElementById(id):null; };
+
+/* -------------------------------- tuning constants --------------------------- */
+var ROUND_TIME=90;          // seconds (Manager Decision #2)
+var LIFT_MAX=3.5;           // clamp ceiling for a single flap impulse (SPEC §4.2)
+var ROLL_MAX=0.5;           // visual bank roll (rad) (SPEC §4.6)
+var GESTURE_HOLD=0.6;       // T-pose hold to start/restart (SPEC §4.8)
+var EMA=0.5;                // pose smoothing factor (SPEC §4.1)
+var DEFAULT_NEUTRAL=-1.15;  // fallback resting avgRaise (arms relaxed) for pitch
+var FLAP_IMPULSE=2.4;       // keyboard flap lift impulse
+var KB_GLIDE=0.7;           // keyboard glide factor when not diving
+var CRUISE_ALT=30, START_ALT=30;   // comfortable flight band
+var CORRIDOR=14;            // |x| clamp (bounded corridor, SPEC §4.6)
+var APPLE_SWAY=5;           // apples stay within this |x| — well inside the corridor
+var APPLE_R=3.0;            // gameplay collect radius (forgiving; contract default is 2.2)
+var CRASH_R=1.6;            // bird crash radius (SPEC §4.9)
+var FIRST_Z=45, APPLE_GAP=55;      // apple spacing along +z (16th ≈ z=870 ≈ 62s at baseSpeed)
+var ALT_MAX=60;            // altitude ribbon display ceiling
+var PARAMS={ gravity:4.0, baseSpeed:14, vxDamp:0.9, turnAccel:16, maxVx:8,
+             climbSlow:0.35, diveFast:0.5, glideDescent:0.35 };
+
+/* ===================== PURE FUNCTIONS — mirrored into tests/sky-dash.logic.test.js =====================
+   Every function here is f(numbers)->number/bool: no DOM, no globals (besides the tuning consts
+   LIFT_MAX / ROLL_MAX, also mirrored into the test). QA tests behaviour/sign/clamp/dead-zone. */
+
+/* 4.2 flap impulse — a wing down-stroke (raise decreasing) makes upward lift. */
+function flapImpulse(prevRaise, curRaise, dt, k, deadzone){
+  if(k==null) k=0.9; if(deadzone==null) deadzone=0.6;
+  if(dt<=0) return 0;
+  var v=(prevRaise-curRaise)/dt;          // >0 on a down-stroke (wrists moving DOWN)
+  if(v<=deadzone) return 0;               // no/slow flap → no lift
+  return clamp(k*(v-deadzone),0,LIFT_MAX);
+}
+
+/* 4.3 glide factor — arms held wide and near shoulder height = stable glide, ∈[0,1]. */
+function glideFactor(wristSpan, shoulderW, raiseL, raiseR){
+  var sw=Math.max(1e-6,shoulderW);
+  var wide=clamp((wristSpan/sw-1.6)/(2.4-1.6),0,1);          // 1.6..2.4 shoulder-widths
+  var level=1-clamp(Math.max(Math.abs(raiseL),Math.abs(raiseR))/0.5,0,1);
+  return wide*level;
+}
+
+/* 4.4 bank rate — arm-height asymmetry → turn. BINDING: raiseL>raiseR ⇒ steer RIGHT (positive). */
+function bankRate(raiseL, raiseR, deadzone, maxRate){
+  if(deadzone==null) deadzone=0.15; if(maxRate==null) maxRate=1.0;
+  var diff=raiseL-raiseR;                 // + = leaning player-right
+  if(Math.abs(diff)<deadzone) return 0;   // resting/level = no turn
+  return sign(diff)*Math.min(Math.abs(diff)-deadzone,1)*maxRate;   // + = RIGHT
+}
+
+/* 4.5 pitch rate — avg wrist height vs the calibrated neutral. + = climb, − = dive. */
+function pitchRate(avgRaise, neutral, deadzone, maxRate){
+  if(deadzone==null) deadzone=0.2; if(maxRate==null) maxRate=1.0;
+  var d=avgRaise-neutral;                 // arms above neutral = climb
+  if(Math.abs(d)<deadzone) return 0;      // resting = level flight
+  return sign(d)*Math.min(Math.abs(d)-deadzone,1)*maxRate;
+}
+
+/* 4.6 flight integrator (pure). state mutated & returned. */
+function stepFlight(state, controls, dt, params){
+  var p=params||PARAMS;
+  var lift=controls.lift||0, turn=controls.turn||0, pitch=controls.pitch||0, glide=controls.glide||0;
+  var descent=p.gravity*(1-glide*(1-p.glideDescent));         // glide softens gravity
+  state.vy=(state.vy||0)+lift-descent*dt;                     // flap up, gravity down
+  state.speed=p.baseSpeed*(1-pitch*p.climbSlow)*(1+Math.max(0,-pitch)*p.diveFast); // climb→slower, dive→faster
+  state.vx=clamp((state.vx||0)*p.vxDamp+turn*p.turnAccel*dt,-p.maxVx,p.maxVx);      // bank → lateral steer
+  state.x=(state.x||0)+state.vx*dt;
+  state.z=(state.z||0)+state.speed*dt;                        // auto-fly forward
+  state.y=(state.y||0)+state.vy*dt;
+  state.roll=lerp(state.roll||0, clamp(-turn,-1,1)*ROLL_MAX, clamp(dt*8,0,1));      // visual bank
+  return state;
+}
+
+/* 4.9 collision / collect (pure). */
+function appleCollected(bird, apple, r){
+  if(r==null) r=2.2;
+  var dx=bird.x-apple.x, dy=bird.y-apple.y, dz=bird.z-apple.z;
+  return (dx*dx+dy*dy+dz*dz) < r*r;
+}
+function isCrash(bird, groundYAt, obstacles, r){
+  if(r==null) r=1.6;
+  var g=(typeof groundYAt==='function')?groundYAt(bird.x,bird.z):groundYAt;
+  if(typeof g==='number' && bird.y<=g) return true;
+  if(obstacles){ for(var i=0;i<obstacles.length;i++){ var o=obstacles[i];
+    var dx=bird.x-o.x, dy=bird.y-o.y, dz=bird.z-o.z, rr=r+(o.r||0);
+    if(dx*dx+dy*dy+dz*dz < rr*rr) return true; } }
+  return false;
+}
+
+/* 4.8 isTpose — reused VERBATIM from game3d.html / tests/logic.test.js. */
+function isTpose(lm){ if(!lm) return false;
+  var vis=function(i){ return lm[i]&&(lm[i].visibility===undefined||lm[i].visibility>0.5); };
+  if(!(vis(11)&&vis(12)&&vis(15)&&vis(16))) return false;
+  var shY=(lm[11].y+lm[12].y)/2, shW=Math.abs(lm[11].x-lm[12].x)+1e-6, span=Math.abs(lm[15].x-lm[16].x);
+  if(span<shW*2.2) return false; var tol=shW*0.9;
+  return Math.abs(lm[15].y-shY)<tol && Math.abs(lm[16].y-shY)<tol; }
+
+/* final score (Manager Decision #2). */
+function computeScore(applesCollected, timeLeft, outcome){
+  return applesCollected*100 + (outcome==='win'?Math.round(timeLeft*10):0);
+}
+
+/* ================================ world / level =============================== */
+/* Authoritative terrain height (the View renders to match; the engine owns crashes). */
+function groundYAt(x,z){ return 6 + 3*Math.sin(z*0.02) + 2*Math.cos(x*0.05 + z*0.013); }
+
+/* ================================ game state G ================================ */
+var G={
+  screen:'lobby',          // 'lobby' | 'play' | 'over'
+  control:'keyboard',      // 'camera' | 'keyboard'
+  running:false,
+  best:0, score:0, newBest:false,
+  bird:null,               // {x,y,z,vx,vy,vz,roll,pitch,speed}
+  apples:[],               // exactly 16 {x,y,z,collected,seed,popT}
+  applesCollected:0,
+  obstacles:[],            // {x,y,z,type,r}
+  timeLeft:ROUND_TIME,
+  outcome:null,            // 'win' | 'crash' | 'timeup' | null
+  controls:{lift:0,turn:0,pitch:0,glide:0},
+  pendingLift:0,           // keyboard flap impulses awaiting a frame
+  keys:{left:false,right:false,dive:false,climb:false},
+  _last:0, _flapDisp:0
+};
+G.cam={ on:false, video:null, pose:null, stream:null, sending:false, poseSeen:false, seen:false,
+  lm:null, raiseL:null, raiseR:null, avgRaise:0, wristSpan:0, shoulderW:0.1, shoulderY:0.5, torso:0.22,
+  neutralRaise:null, prevAvg:null, tpose:false, tHold:0 };
+
+/* ================================ tiny WebAudio sfx =========================== */
+var actx=null, muted=false;
+function audioOn(){ try{ if(!actx && (typeof window!=='undefined') && (window.AudioContext||window.webkitAudioContext))
+  actx=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){}
+  try{ if(actx&&actx.state==='suspended') actx.resume(); }catch(e){} }
+function blip(f,dur,type,v){ if(muted||!actx) return; try{ var t=actx.currentTime,o=actx.createOscillator(),g=actx.createGain();
+  o.type=type||'sine'; o.frequency.setValueAtTime(f,t); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(v||0.1,t+0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001,t+(dur||0.12)); o.connect(g).connect(actx.destination); o.start(t); o.stop(t+(dur||0.12)+0.02); }catch(e){} }
+function sfx(n){ if(n==='flap') blip(300,0.08,'sine',0.06);
+  else if(n==='coin') blip(1040,0.07,'triangle',0.08);
+  else if(n==='win'){ [523,659,784,1047].forEach(function(f,i){ setTimeout(function(){ blip(f,0.12,'triangle',0.08); },i*90); }); }
+  else if(n==='crash'){ blip(160,0.4,'sawtooth',0.14); setTimeout(function(){ blip(90,0.5,'sawtooth',0.12); },110); } }
+
+/* ================================ camera / pose ============================== */
+function camMsg(t){ var e=$('camMsg'); if(e) e.textContent=t||''; }
+function showCamPip(on){ var w=$('camWrap'); if(w&&w.classList) w.classList.toggle('hidden',!on); }
+function loadScript(src,timeout){ timeout=timeout||15000; return new Promise(function(res,rej){
+  var s=document.createElement('script'); s.src=src; s.crossOrigin='anonymous';
+  var to=setTimeout(function(){ rej(new Error('timeout')); },timeout);
+  s.onload=function(){ clearTimeout(to); res(); }; s.onerror=function(){ clearTimeout(to); rej(new Error('load failed')); };
+  document.head.appendChild(s); }); }
+
+function pumpCamera(){ var c=G.cam; if(!c.on||!c.pose||c.sending||G.control!=='camera') return;
+  var v=c.video; if(!v||v.readyState<2) return;
+  c.sending=true; try{ c.pose.send({image:v}).catch(function(){}).finally(function(){ c.sending=false; }); }
+  catch(e){ c.sending=false; } }
+
+function teardownCamera(){ var c=G.cam; showCamPip(false); if(!c.on && !c.stream) return;
+  try{ if(c.stream) c.stream.getTracks().forEach(function(t){ t.stop(); }); }catch(e){}
+  c.stream=null; try{ if(c.pose&&c.pose.close) c.pose.close(); }catch(e){}
+  c.pose=null; if(c.video) c.video.srcObject=null; c.on=false; c.seen=false; c.poseSeen=false; }
+
+/* Smoke-safe warm-up: break the instant a pose is seen (the stub fires onResults
+   synchronously on the first send) — BEFORE any await-on-requestAnimationFrame. */
+function warmUp(){ var c=G.cam; return (async function(){
+  var v=c.video;
+  for(var i=0;i<150 && !c.poseSeen;i++){
+    if(v && v.readyState>=2){ try{ await c.pose.send({image:v}); }catch(e){} }
+    if(c.poseSeen) break;
+    await new Promise(function(r){ requestAnimationFrame(r); });
+  }
+})(); }
+
+var camBooting=false;
+async function startCameraFlow(){
+  if(camBooting) return; audioOn(); G.control='camera';
+  if(G.cam.on){ showCamPip(true); return; }
+  camBooting=true; camMsg('Starting camera…');
+  try{
+    if(typeof window.Pose==='undefined') await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js');
+    if(typeof window.Pose==='undefined') throw new Error('lib');
+    var stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false});
+    G.cam.stream=stream;
+    var v=G.cam.video; if(v){ v.srcObject=stream; try{ await v.play(); }catch(e){} }
+    var pose=new window.Pose({locateFile:function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/pose/'+f; }});
+    pose.setOptions({modelComplexity:1,smoothLandmarks:true,enableSegmentation:false,minDetectionConfidence:0.5,minTrackingConfidence:0.5});
+    pose.onResults(onPoseResults);
+    G.cam.pose=pose;
+    await warmUp();
+    G.cam.on=true; showCamPip(true); camMsg('');
+  }catch(err){ camFallback(err); }
+  finally{ camBooting=false; }
+}
+function camFallback(err){
+  G.cam.on=false;
+  try{ if(G.cam.stream) G.cam.stream.getTracks().forEach(function(t){ t.stop(); }); }catch(e){}
+  G.cam.stream=null; if(G.cam.video) G.cam.video.srcObject=null; showCamPip(false);
+  var n=err&&err.name;
+  camMsg(n==='NotAllowedError' ? 'Camera blocked — allow it, or press Play (keyboard).'
+       : n==='NotFoundError'  ? 'No camera found — press Play (keyboard).'
+       :                        "Couldn't start camera tracking — press Play (keyboard).");
+  G.control='keyboard';
+}
+
+/* Pose callback — derive per-frame signals (SPEC §4.1), smooth, set the T-pose flag. */
+function onPoseResults(res){
+  var cam=G.cam; cam.poseSeen=true;
+  var lm=res&&res.poseLandmarks; cam.lm=lm||null;
+  if(!lm){ cam.seen=false; return; }
+  var vis=function(i){ return lm[i]&&(lm[i].visibility===undefined||lm[i].visibility>0.5); };
+  cam.tpose=isTpose(lm);
+  if(!(vis(11)&&vis(12)&&vis(15)&&vis(16))){ cam.seen=false; return; }
+  cam.seen=true;
+  var shoulderY=(lm[11].y+lm[12].y)/2;
+  var shoulderW=Math.max(0.04,Math.abs(lm[11].x-lm[12].x));
+  var hipsOk=vis(23)&&vis(24);
+  var hipY=hipsOk?(lm[23].y+lm[24].y)/2:shoulderY+shoulderW*1.6;
+  var torso=Math.max(0.05,Math.abs(hipY-shoulderY));
+  var raiseLraw=(shoulderY-lm[15].y)/torso;   // + = LEFT wrist above shoulders
+  var raiseRraw=(shoulderY-lm[16].y)/torso;   // + = RIGHT wrist above shoulders
+  cam.raiseL=(cam.raiseL==null)?raiseLraw:lerp(cam.raiseL,raiseLraw,EMA);
+  cam.raiseR=(cam.raiseR==null)?raiseRraw:lerp(cam.raiseR,raiseRraw,EMA);
+  cam.avgRaise=(cam.raiseL+cam.raiseR)/2;
+  cam.wristSpan=Math.abs(lm[15].x-lm[16].x);
+  cam.shoulderW=shoulderW; cam.torso=torso; cam.shoulderY=shoulderY;
+}
+
+/* ================================ controls =================================== */
+function flap(){ if(G.screen!=='play') return; G.pendingLift=Math.min(G.pendingLift+FLAP_IMPULSE,LIFT_MAX); sfx('flap'); }
+function computeControls(dt){
+  var lift=0,turn=0,pitch=0,glide=0;
+  if(G.pendingLift>0){ lift+=G.pendingLift; G.pendingLift=0; }        // keyboard flaps
+  if(G.control==='camera' && G.cam.seen){
+    var c=G.cam, cur=c.avgRaise;
+    if(c.prevAvg!=null){ var l=flapImpulse(c.prevAvg,cur,dt); if(l>0) lift+=l; }   // camera flap
+    c.prevAvg=cur;
+    turn=bankRate(c.raiseL,c.raiseR);
+    pitch=pitchRate(c.avgRaise, (c.neutralRaise==null?DEFAULT_NEUTRAL:c.neutralRaise));
+    glide=glideFactor(c.wristSpan,c.shoulderW,c.raiseL,c.raiseR);
+  } else if(G.control==='keyboard'){
+    turn=(G.keys.right?1:0)-(G.keys.left?1:0);
+    pitch=(G.keys.climb?1:0)-(G.keys.dive?1:0);
+    glide=(!G.keys.dive)?KB_GLIDE:0;
+  }
+  return {lift:lift,turn:turn,pitch:pitch,glide:glide};
+}
+
+/* ================================ game flow ================================== */
+function buildLevel(){
+  G.apples=[];
+  for(var i=0;i<16;i++){
+    G.apples.push({ x:APPLE_SWAY*Math.sin(i*0.9), y:CRUISE_ALT+3*Math.sin(i*0.6), z:FIRST_Z+i*APPLE_GAP,
+      collected:false, seed:(i*0.6180339887)%1, popT:0 });
+  }
+  // scenery obstacles: mountains/trees/rocks placed OUTSIDE the apple sway band so the
+  // intended path is solvable, but a bird that strays to the corridor edge will crash.
+  G.obstacles=[];
+  var types=['mountain','tree','rock'];
+  for(var j=0;j<22;j++){
+    var side=(j%2)?1:-1;
+    var type=types[j%3];
+    var xoff=(type==='mountain')?13:10;
+    G.obstacles.push({ x:side*xoff, y:CRUISE_ALT, z:FIRST_Z+ j*(APPLE_GAP*0.75) + 28,
+      type:type, r:(type==='mountain')?4:1.5 });
+  }
+}
+function startWithScheme(s){ audioOn(); if(s!=='camera' && G.cam.on) teardownCamera(); G.control=s; startGame(); }
+function startGame(){
+  G.screen='play'; G.running=true; G.outcome=null; G.newBest=false;
+  G.timeLeft=ROUND_TIME; G.applesCollected=0; G.pendingLift=0; G._flapDisp=0;
+  G.keys={left:false,right:false,dive:false,climb:false};
+  G.bird={ x:0, y:START_ALT, z:0, vx:0, vy:0, vz:0, roll:0, pitch:0, speed:PARAMS.baseSpeed };
+  G.controls={lift:0,turn:0,pitch:0,glide:0};
+  buildLevel();
+  // capture the resting pose as the pitch neutral (SPEC §4.7)
+  if(G.control==='camera' && G.cam.seen) G.cam.neutralRaise=G.cam.avgRaise;
+  else if(G.cam.neutralRaise==null) G.cam.neutralRaise=DEFAULT_NEUTRAL;
+  G.cam.prevAvg=null; G.cam.tHold=0;
+  showScreen('play'); updateHud();
+}
+function stepPlay(dt){
+  if(!G.running) return;
+  G.timeLeft=Math.max(0,G.timeLeft-dt);
+  var ctrl=computeControls(dt); G.controls=ctrl;
+  stepFlight(G.bird,ctrl,dt,PARAMS);
+  G.bird.pitch=ctrl.pitch;
+  G.bird.x=clamp(G.bird.x,-CORRIDOR,CORRIDOR);
+  // collect apples (each counts once)
+  for(var i=0;i<G.apples.length;i++){ var ap=G.apples[i];
+    if(!ap.collected && appleCollected(G.bird,ap,APPLE_R)){ ap.collected=true; ap.popT=0; G.applesCollected++; onCollect(); } }
+  if(G.applesCollected>=16){ return gameOver('win'); }
+  if(isCrash(G.bird,groundYAt,G.obstacles,CRASH_R)){ return gameOver('crash'); }
+  if(G.timeLeft<=0){ return gameOver(G.applesCollected>=16?'win':'timeup'); }
+  updateHud();
+}
+function onCollect(){ sfx('coin'); var a=$('appleV'); if(a&&a.classList){ a.classList.remove('pop'); void (a.offsetWidth||0); a.classList.add('pop'); } }
+function gameOver(outcome){
+  if(G.screen==='over') return;
+  G.outcome=outcome; G.running=false; G.screen='over';
+  G.score=computeScore(G.applesCollected,G.timeLeft,outcome);
+  if(G.score>G.best){ G.best=G.score; G.newBest=true; try{ localStorage.setItem('skydash_best',String(G.best)); }catch(e){} }
+  sfx(outcome==='win'?'win':'crash');
+  updateOverUI();
+}
+
+/* ================================ HUD / screens ============================== */
+function show(id,on){ var e=$(id); if(e&&e.classList) e.classList.toggle('hidden',!on); }
+function showScreen(name){
+  show('lobbyScreen', name==='lobby');
+  show('overScreen', name==='over');
+  show('hud', name==='play');
+  show('feedback', name==='play');
+  show('altRibbon', name==='play');
+}
+function setChip(id,active){ var e=$(id); if(!e||!e.classList) return; e.classList.toggle('active',active); e.classList.toggle('neutral',!active); }
+function updateChips(){
+  var c=G.controls||{lift:0,turn:0,pitch:0,glide:0};
+  var fb=$('flapBar'); if(fb&&fb.style){ G._flapDisp=Math.max((G._flapDisp||0)*0.88, clamp((c.lift||0)/LIFT_MAX,0,1)); fb.style.width=(G._flapDisp*100).toFixed(0)+'%'; }
+  setChip('chipFlap',(c.lift||0)>0.01);
+  setChip('chipGlide',(c.glide||0)>=0.6);
+  var gl=$('glideVal'); if(gl) gl.textContent=((c.glide||0)>=0.6)?'GLIDE ✓':'GLIDE';
+  var turn=c.turn||0, tm=Math.min(Math.abs(turn),1)*100;
+  var bL=$('bankL'), bR=$('bankR'); if(bL&&bL.style) bL.style.width=(turn<0?tm:0)+'%'; if(bR&&bR.style) bR.style.width=(turn>0?tm:0)+'%';
+  setChip('chipBank',Math.abs(turn)>0.001);
+  var bt=$('bankTxt'); if(bt) bt.textContent=Math.abs(turn)<0.001?'—':(turn>0?'► RIGHT':'◄ LEFT');
+  var pitch=c.pitch||0, pm=Math.min(Math.abs(pitch),1)*100;
+  var pU=$('pitchU'), pD=$('pitchD'); if(pU&&pU.style) pU.style.width=(pitch>0?pm:0)+'%'; if(pD&&pD.style) pD.style.width=(pitch<0?pm:0)+'%';
+  setChip('chipPitch',Math.abs(pitch)>0.001);
+  var pt=$('pitchTxt'); if(pt) pt.textContent=Math.abs(pitch)<0.001?'— LEVEL':(pitch>0?'▲ CLIMB':'▼ DIVE');
+}
+function updateHud(){
+  if(!G.bird) return;
+  var A=$('appleV'); if(A) A.textContent=G.applesCollected+'/16';
+  var s=Math.max(0,Math.ceil(G.timeLeft));
+  var T=$('timeV'); if(T){ T.textContent=Math.floor(s/60)+':'+('0'+(s%60)).slice(-2);
+    T.style.color=(G.timeLeft<=10)?'var(--bad)':((G.timeLeft<=15)?'var(--warn)':'var(--ink)');
+    if(T.classList) T.classList.toggle('pulse', G.timeLeft<=10 && G.timeLeft>0); }
+  var spd=G.bird.speed/PARAMS.baseSpeed;
+  var S=$('speedV'); if(S) S.textContent=spd.toFixed(1)+'×';
+  var alt=Math.max(0,Math.round(G.bird.y-groundYAt(G.bird.x,G.bird.z)));
+  var AL=$('altV'); if(AL){ AL.textContent=alt+'m'; AL.style.color=(alt<8)?'var(--bad)':'var(--ink)'; }
+  var f=$('altFill'); if(f&&f.style){ f.style.height=(clamp(alt/ALT_MAX,0,1)*100).toFixed(0)+'%';
+    f.style.background=(alt<8)?'var(--bad)':'linear-gradient(180deg,var(--lane),var(--good))'; }
+  updateChips();
+}
+function updateOverUI(){
+  var map={ win:['YOU','WIN!','var(--good)','😄 All 16 apples!'],
+    crash:['CRASH','LANDED','var(--bad)','💥 You hit the ground.'],
+    timeup:['TIME','UP','var(--warn)','⏱ Out of time — '+G.applesCollected+'/16 apples.'] };
+  var m=map[G.outcome]||map.timeup;
+  var a=$('overTitleA'); if(a){ a.textContent=m[0]; a.style.color=m[2]; }
+  var b=$('overTitleB'); if(b) b.textContent=m[1];
+  var mood=$('overMood'); if(mood) mood.textContent=m[3];
+  var oa=$('overApples'); if(oa) oa.textContent=G.applesCollected+'/16';
+  var os=$('overScore'); if(os) os.textContent=G.score;
+  var ob=$('overBest'); if(ob) ob.textContent=G.best;
+  var nb=$('newBest'); if(nb&&nb.classList) nb.classList.toggle('hidden',!G.newBest);
+  showScreen('over');
+}
+
+/* ============================ webcam skeleton overlay (SPEC §8.3) ============= */
+var CON=[[11,12],[11,23],[12,24],[23,24],[11,13],[13,15],[12,14],[14,16],
+  [23,25],[25,27],[24,26],[26,28],[27,29],[29,31],[28,30],[30,32],[27,31],[28,32],
+  [15,17],[15,19],[15,21],[16,18],[16,20],[16,22],[0,11],[0,12]];
+function roundRect(gx,x,y,w,h,r){ gx.beginPath(); gx.moveTo(x+r,y); gx.arcTo(x+w,y,x+w,y+h,r); gx.arcTo(x+w,y+h,x,y+h,r); gx.arcTo(x,y+h,x,y,r); gx.arcTo(x,y,x+w,y,r); gx.closePath(); }
+function overlayStatus(){
+  if(G.screen==='lobby') return G.cam.tpose?'hold the T… taking off':'🧍 make a T-shape to fly';
+  if(G.screen==='over')  return G.cam.tpose?'hold the T… restarting':'🧍 make a T-shape to fly again';
+  return G.cam.seen?'tracking':'stand back so your whole body shows';
+}
+function drawCamOverlay(){
+  var cv=$('camOverlay'); if(!cv||!cv.getContext) return;
+  var gx=cv.getContext('2d'); if(!gx) return;
+  var w=cv.width||132, h=cv.height||99, x=0, y=0;
+  gx.clearRect(x,y,w,h);
+  var lm=G.cam.lm;
+  if(G.screen==='lobby' || G.screen==='over'){
+    var p=clamp(G.cam.tHold/GESTURE_HOLD,0,1);
+    if(p>0){ var cx=x+w/2, cy=y+h*0.42, r=26;
+      gx.lineWidth=6; gx.strokeStyle='rgba(255,255,255,0.18)'; gx.beginPath(); gx.arc(cx,cy,r,0,7); gx.stroke();
+      gx.strokeStyle='#ffd23f'; gx.beginPath(); gx.arc(cx,cy,r,-Math.PI/2,-Math.PI/2+p*Math.PI*2,false); gx.stroke(); }
+  }
+  if(lm){
+    var px=function(i){ return x+(1-lm[i].x)*w; }, py=function(i){ return y+lm[i].y*h; };
+    var tp=(G.screen==='lobby'||G.screen==='over')&&G.cam.tpose;
+    gx.lineWidth=4; gx.lineCap='round'; gx.strokeStyle=tp?'#3ef0a0':'#5ee0ff'; gx.beginPath();
+    CON.forEach(function(pair){ var a=pair[0], b=pair[1]; if(lm[a]&&lm[b]){ gx.moveTo(px(a),py(a)); gx.lineTo(px(b),py(b)); } });
+    gx.stroke();
+    gx.fillStyle='#ffd23f';
+    [0,11,12,13,14,15,16,23,24].forEach(function(i){ if(lm[i]){ gx.beginPath(); gx.arc(px(i),py(i),4,0,7); gx.fill(); } });
+  }
+  var status=overlayStatus();
+  gx.fillStyle='rgba(0,0,0,0.6)'; gx.fillRect(x,y+h-22,w,22);
+  gx.font='700 11px Trebuchet MS'; gx.textAlign='center';
+  gx.fillStyle=(status.indexOf('make a T')>=0||status.indexOf('stand back')>=0)?'#ffd23f':'#9fe8c9';
+  gx.fillText(status,x+w/2,y+h-7);
+  gx.strokeStyle='rgba(94,224,255,0.75)'; gx.lineWidth=3; roundRect(gx,x,y,w,h,12); gx.stroke();
+}
+
+/* ================================ RAF loop =================================== */
+function update(ts){
+  if(ts==null) ts=(G._last||0)+16;
+  var dt=Math.min(0.05,(G._last?ts-G._last:16)/1000); G._last=ts; var t=ts/1000;
+  pumpCamera();
+  if((G.screen==='lobby'||G.screen==='over') && G.control==='camera' && G.cam.on){
+    if(G.cam.tpose) G.cam.tHold+=dt; else G.cam.tHold=Math.max(0,G.cam.tHold-dt*2);
+    if(G.cam.tHold>=GESTURE_HOLD){ G.cam.tHold=0; startGame(); }
+  }
+  if(G.screen==='play') stepPlay(dt);
+  if(G.cam.on){ try{ drawCamOverlay(); }catch(e){} }
+  if(typeof window!=='undefined' && typeof window.__skyRender==='function'){ try{ window.__skyRender(dt,t); }catch(e){} }
+  if(typeof requestAnimationFrame!=='undefined') requestAnimationFrame(update);
+}
+
+/* ================================ keyboard =================================== */
+function wire(id,ev,fn){ var e=$(id); if(e&&e.addEventListener) e.addEventListener(ev,fn); }
+function initInput(){
+  if(typeof window==='undefined' || !window.addEventListener) return;
+  window.addEventListener('keydown',function(e){
+    if(document.activeElement && document.activeElement.tagName==='INPUT') return;
+    var k=e.key;
+    if(G.screen==='lobby' && !camBooting){ if(k===' '||k==='Enter'){ e.preventDefault(); startWithScheme('keyboard'); } return; }
+    if(G.screen==='over'){ if(k===' '||k==='Enter'){ e.preventDefault(); startGame(); } return; }
+    if(G.screen!=='play') return;
+    if(k===' '||k==='ArrowUp'||k==='w'||k==='W'){ flap(); e.preventDefault(); }
+    else if(k==='ArrowDown'||k==='s'||k==='S'){ G.keys.dive=true; e.preventDefault(); }
+    else if(k==='ArrowLeft'||k==='a'||k==='A'){ G.keys.left=true; e.preventDefault(); }
+    else if(k==='ArrowRight'||k==='d'||k==='D'){ G.keys.right=true; e.preventDefault(); }
+    else if(k==='Shift'){ G.keys.climb=true; }
+  });
+  window.addEventListener('keyup',function(e){ var k=e.key;
+    if(k==='ArrowDown'||k==='s'||k==='S') G.keys.dive=false;
+    else if(k==='ArrowLeft'||k==='a'||k==='A') G.keys.left=false;
+    else if(k==='ArrowRight'||k==='d'||k==='D') G.keys.right=false;
+    else if(k==='Shift') G.keys.climb=false; });
+  window.addEventListener('blur',function(){ G.keys={left:false,right:false,dive:false,climb:false}; });
+}
+
+/* ================================ boot ======================================= */
+function initDom(){
+  G.cam.video=$('cam');
+  try{ G.best=parseInt((localStorage.getItem('skydash_best')||'0'),10)||0; }catch(e){ G.best=0; }
+  wire('playKeysBtn','click',function(){ startWithScheme('keyboard'); });
+  wire('playCamBtn','click',function(){ startCameraFlow(); });
+  wire('againBtn','click',function(){ startGame(); });
+  wire('howToBtn','click',function(){ var hw=$('howto'); if(hw&&hw.classList) hw.classList.toggle('hidden'); });
+  initInput();
+  showScreen('lobby');
+}
+initDom();
+if(typeof requestAnimationFrame!=='undefined') requestAnimationFrame(update);
+
+/* ============================ test exposer (SPEC §6.2) ======================= */
+;try{ globalThis.__sky = { G:G, update:update, startGame:startGame, onPoseResults:onPoseResults,
+  flapImpulse:flapImpulse, glideFactor:glideFactor, bankRate:bankRate, pitchRate:pitchRate, stepFlight:stepFlight,
+  appleCollected:appleCollected, isCrash:isCrash, isTpose:isTpose,
+  computeScore:computeScore, flap:flap, startWithScheme:startWithScheme, groundYAt:groundYAt }; }catch(e){}
+</script>
+
+<!-- VIEW — three.js module (placeholder; T3 fills this). Loaded after the Engine. -->
+<script type="module">
+/* T3 fills the three.js View here: import * as THREE from 'three'; build scene/terrain/
+   mountains/trees/rocks + 16 glowing spinning apples + procedural low-poly bird + trailing
+   camera + lighting/fog, then register window.__skyRender = (dt, t) => { read engine state,
+   position meshes, render }. Until then this is an intentionally empty, valid stub so the
+   page is valid and the Engine runs (graceful degrade — no render). SPEC §3.1/§3.2. */
+</script>
+</body>
+</html>
