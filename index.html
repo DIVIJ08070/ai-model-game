@@ -2,1684 +2,196 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="theme-color" content="#0c1022" />
-<title>Body Dash — camera motion runner</title>
+<meta name="description" content="A collection of webcam & motion-controlled browser games. Play with your body — no controller needed." />
+<title>Motion Arcade — play with your body</title>
 <style>
   :root{
-    --bg:#0c1022; --panel:#141a33; --ink:#eaf0ff;
-    --lane:#5ee0ff; --accent:#ff5da2; --good:#3ef0a0; --warn:#ffd23f; --bad:#ff3b5c;
-    --p1:#7c5cff; --p2:#ff8a3c;
+    --bg:#0c1022; --bg2:#0a0e1c; --panel:#141a33; --ink:#eaf0ff; --muted:#9aa6d0;
+    --cyan:#5ee0ff; --pink:#ff5da2; --green:#3ef0a0; --yellow:#ffd23f;
+    --purple:#7c5cff; --orange:#ff8a3c;
+    --line:rgba(255,255,255,0.10);
   }
   *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  html,body{
-    margin:0; height:100%; width:100%; overflow:hidden; position:fixed; inset:0;
+  html,body{ margin:0; min-height:100%; }
+  body{
     background:var(--bg); color:var(--ink);
     font-family:'Trebuchet MS','Segoe UI',system-ui,-apple-system,sans-serif;
-    -webkit-user-select:none; user-select:none; touch-action:none;
+    overflow-x:hidden; position:relative; min-height:100vh;
   }
-  #app{ position:fixed; inset:0; }
-  canvas{ display:block; }
 
-  /* game fills the screen */
-  #game{ position:absolute; inset:0; width:100%; height:100%; }
-
-  /* webcam is only a hidden frame source; the visible panel is drawn on #game */
-  #cam{ position:fixed; width:2px; height:2px; top:0; left:0; opacity:0.01; pointer-events:none; z-index:-1; }
-
-  /* HUD */
-  #hud{ position:absolute; top:12px; left:12px; z-index:7; display:flex; flex-direction:column; gap:8px; }
-  .stat{ background:rgba(20,26,51,0.8); border:2px solid rgba(255,255,255,0.12); border-radius:12px; padding:6px 12px; min-width:120px; }
-  .stat .k{ font-size:10px; letter-spacing:1.5px; text-transform:uppercase; opacity:0.65; font-weight:800; }
-  .stat .v{ font-size:22px; font-weight:900; line-height:1.05; }
-  #scoreV{ color:var(--warn); }
-  .mini{ display:flex; gap:8px; }
-  .mini .stat{ min-width:0; }
-
-  /* bottom control feedback */
-  #feedback{
-    position:absolute; left:50%; bottom:16px; transform:translateX(-50%);
-    z-index:7; display:flex; gap:10px; align-items:center;
+  /* ---------- animated synthwave background ---------- */
+  .bg{ position:fixed; inset:0; z-index:-1; overflow:hidden; background:
+      radial-gradient(120% 80% at 50% -10%, #1b2350 0%, var(--bg) 55%, var(--bg2) 100%); }
+  .sun{
+    position:absolute; left:50%; top:8vh; width:min(60vw,420px); aspect-ratio:1;
+    transform:translateX(-50%); border-radius:50%;
+    background:radial-gradient(circle at 50% 45%, #ffd76a 0%, #ff7ad0 45%, #a24bff 70%, transparent 72%);
+    filter:blur(6px); opacity:.55;
   }
-  .chip{
-    background:rgba(20,26,51,0.85); border:2px solid rgba(255,255,255,0.14);
-    border-radius:999px; padding:8px 14px; font-weight:800; font-size:14px;
-    display:flex; align-items:center; gap:8px;
+  .grid{
+    position:absolute; left:50%; bottom:-10vh; width:300vw; height:60vh;
+    transform:translateX(-50%) perspective(340px) rotateX(66deg);
+    background-image:
+      linear-gradient(var(--cyan) 2px, transparent 2px),
+      linear-gradient(90deg, var(--cyan) 2px, transparent 2px);
+    background-size:60px 60px; opacity:.22;
+    -webkit-mask-image:linear-gradient(to top, #000 20%, transparent 90%);
+            mask-image:linear-gradient(to top, #000 20%, transparent 90%);
+    animation:flow 3.5s linear infinite;
   }
-  .lanedots{ display:flex; gap:6px; }
-  .ld{ width:14px; height:14px; border-radius:50%; background:rgba(255,255,255,0.2); border:2px solid rgba(255,255,255,0.25); }
-  .ld.on{ background:var(--lane); border-color:#fff; box-shadow:0 0 10px var(--lane); }
-  .cad{ width:120px; height:12px; border-radius:8px; background:rgba(0,0,0,0.4); overflow:hidden; }
-  .cad > span{ display:block; height:100%; width:0%; background:linear-gradient(90deg,var(--warn),var(--good)); transition:width .1s linear; }
-  #jumpChip,#duckChip,#punchChip{ opacity:0.35; transition:opacity .1s, transform .08s; }
-  #jumpChip.fire,#duckChip.fire{ opacity:1; transform:scale(1.12); color:var(--good); border-color:var(--good); }
-  #punchChip.fire{ opacity:1; transform:scale(1.12); color:var(--p2); border-color:var(--p2); }
+  @keyframes flow{ to{ background-position:0 60px, 0 0; } }
+  @media (prefers-reduced-motion:reduce){ .grid{ animation:none; } }
 
-  /* ready lobby */
-  #readyBar{
-    position:absolute; left:50%; bottom:24px; transform:translateX(-50%);
-    z-index:9; display:flex; flex-direction:column; gap:12px; align-items:center;
-  }
-  .chip.big{ font-size:17px; padding:11px 20px; }
-  .chip.big b{ color:var(--lane); }
-  #startBtn{ width:auto; padding:12px 26px; font-size:18px; }
-  .btn.go{ background:linear-gradient(180deg,var(--good),#1fa877); color:#062018; box-shadow:0 6px 0 #14624a; }
-  .btn.go:active{ box-shadow:0 2px 0 #14624a; }
+  /* ---------- layout ---------- */
+  .wrap{ max-width:1080px; margin:0 auto; padding:clamp(20px,5vw,56px) 20px 80px; }
 
-  .btnrow{ position:absolute; top:12px; right:12px; }
-  /* moved right btns to left of campanel when panel visible */
-  #topbtns{ position:absolute; top:12px; left:50%; transform:translateX(-50%); z-index:9; display:flex; gap:8px; }
-  .iconbtn{
-    width:44px; height:44px; border-radius:12px; border:2px solid rgba(255,255,255,0.2);
-    background:rgba(20,26,51,0.85); color:var(--ink); font-size:18px; cursor:pointer;
+  header.hero{ text-align:center; margin-bottom:clamp(28px,6vw,56px); }
+  .kicker{
+    display:inline-block; font-size:11px; letter-spacing:3px; text-transform:uppercase;
+    font-weight:800; color:var(--cyan); border:1px solid var(--line);
+    padding:6px 14px; border-radius:999px; background:rgba(94,224,255,.06);
   }
-  .iconbtn:active{ transform:translateY(2px); }
+  h1{
+    font-size:clamp(38px,9vw,84px); line-height:.95; margin:18px 0 10px; font-weight:900;
+    letter-spacing:1px;
+    background:linear-gradient(90deg,var(--cyan),var(--pink) 60%,var(--purple));
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+    text-shadow:0 0 40px rgba(124,92,255,.25);
+  }
+  .sub{ color:var(--muted); font-size:clamp(15px,3.4vw,19px); max-width:560px; margin:0 auto; }
+  .count{ margin-top:16px; font-size:13px; color:var(--muted); }
+  .count b{ color:var(--yellow); }
 
-  /* overlays */
-  .screen{
-    position:absolute; inset:0; z-index:20; display:flex; align-items:center; justify-content:center;
-    padding:20px; text-align:center;
-    background:radial-gradient(120% 120% at 50% 0%, rgba(124,92,255,0.25), rgba(12,16,34,0.92));
-    backdrop-filter:blur(3px);
+  /* ---------- game grid ---------- */
+  .games{ display:grid; gap:20px; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); }
+
+  .card{
+    position:relative; display:flex; flex-direction:column; text-decoration:none; color:inherit;
+    background:linear-gradient(180deg,var(--panel),#10152a);
+    border:1px solid var(--line); border-radius:20px; padding:22px; min-height:230px;
+    overflow:hidden; transition:transform .18s ease, border-color .18s ease, box-shadow .18s ease;
   }
-  .screen.hidden{ display:none; }
-  .hidden{ display:none !important; }
-  .card{ width:min(560px,94vw); background:rgba(16,21,43,0.92); border:3px solid rgba(94,224,255,0.35);
-    border-radius:24px; padding:26px 22px; box-shadow:0 18px 50px rgba(0,0,0,0.55); max-height:94dvh; overflow:auto; }
-  .title{ font-weight:900; line-height:0.92; margin:0 0 4px; }
-  .title .a{ display:block; font-size:clamp(30px,8vw,54px); color:var(--lane); -webkit-text-stroke:2px #08122a; paint-order:stroke fill; letter-spacing:1px; text-shadow:0 4px 0 #071026; }
-  .title .b{ display:block; font-size:clamp(30px,8vw,54px); color:var(--accent); -webkit-text-stroke:2px #08122a; paint-order:stroke fill; letter-spacing:1px; text-shadow:0 4px 0 #071026; }
-  .sub{ opacity:0.85; font-size:14px; margin:8px 0 16px; line-height:1.5; }
-  .steps{ text-align:left; background:rgba(94,224,255,0.08); border:2px dashed rgba(94,224,255,0.4);
-    border-radius:14px; padding:12px 14px; font-size:13.5px; line-height:1.7; margin-bottom:16px; }
-  .steps b{ color:var(--lane); }
-  .kbd{ display:inline-block; background:#0a1330; border:1px solid rgba(255,255,255,0.2); border-radius:6px; padding:0 6px; font-weight:800; font-size:12px; }
-  .btn{
-    appearance:none; border:none; border-radius:16px; cursor:pointer;
-    font-family:inherit; font-weight:900; font-size:20px; padding:15px 22px; width:100%;
-    background:linear-gradient(180deg,var(--accent),#e0407f); color:#fff;
-    box-shadow:0 6px 0 #7e1f47; letter-spacing:0.5px;
+  .card::before{ /* accent glow */
+    content:""; position:absolute; inset:-1px; border-radius:20px; padding:1px; pointer-events:none;
+    background:linear-gradient(140deg, var(--accent,var(--cyan)), transparent 45%);
+    -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite:xor; mask-composite:exclude; opacity:.5; transition:opacity .18s ease;
   }
-  .btn:active{ transform:translateY(4px); box-shadow:0 2px 0 #7e1f47; }
-  .btn.ghost{ background:transparent; border:2px solid rgba(255,255,255,0.3); color:var(--ink); box-shadow:none; }
-  .diffrow{ display:flex; gap:8px; margin:0 0 14px; }
-  .diffrow button{ flex:1; min-width:0; padding:12px 4px; border-radius:14px; border:2px solid rgba(255,255,255,0.18);
-    background:rgba(255,255,255,0.05); color:var(--ink); font-weight:800; cursor:pointer; font-size:14px; }
-  .diffrow button[aria-pressed="true"]{ border-color:var(--lane); background:rgba(94,224,255,0.15); }
-  .ctarow{ display:flex; gap:8px; margin-top:10px; }
-  .ctarow .btn{ font-size:15px; padding:12px 8px; }
-  .linkrow{ display:flex; gap:18px; justify-content:center; margin-top:14px; }
-  .linkbtn{ background:none; border:none; color:var(--lane); font-weight:800; font-size:14px; cursor:pointer;
-    text-decoration:underline; text-underline-offset:3px; font-family:inherit; }
-  /* touch boost pad */
-  #boostPad{ position:absolute; right:16px; bottom:74px; z-index:8; width:92px; height:92px; border-radius:50%;
-    border:3px solid rgba(94,224,255,0.6); background:rgba(20,26,51,0.72); color:var(--lane);
-    font-weight:900; font-size:14px; letter-spacing:1px; cursor:pointer; }
-  #boostPad:active,#boostPad.on{ background:rgba(94,224,255,0.28); box-shadow:0 0 18px rgba(94,224,255,0.5); }
-  #skipIntro{ position:absolute; left:50%; bottom:26px; transform:translateX(-50%); z-index:21;
-    background:rgba(20,26,51,0.85); border:2px solid rgba(255,255,255,0.2); color:var(--ink);
-    border-radius:999px; padding:9px 18px; font-weight:800; font-size:14px; cursor:pointer; opacity:0.75; }
-  #skipIntro:hover{ opacity:1; }
-  /* how-to-play controls table */
-  .howtbl{ width:100%; border-collapse:collapse; font-size:13px; margin:6px 0 16px; }
-  .howtbl th,.howtbl td{ border:1px solid rgba(255,255,255,0.1); padding:7px 8px; text-align:center; }
-  .howtbl th{ color:var(--lane); font-size:12px; }
-  .howtbl td.act{ text-align:left; font-weight:800; }
-  .howtbl .ob{ font-size:10px; font-weight:900; padding:1px 5px; border-radius:6px; }
-  .howtbl .ob.y{ background:#ffd23f; color:#3a2a00; } .howtbl .ob.p{ background:#a06bff; color:#1a0d33; }
-  .howtbl .ob.o{ background:#ff8a3c; color:#3a1a00; } .howtbl .ob.k{ background:#ff5da2; color:#3a0018; }
-  /* leaderboard */
-  .lbfilter{ display:flex; gap:6px; justify-content:center; margin:0 0 12px; flex-wrap:wrap; }
-  .lbfilter button{ padding:7px 12px; border-radius:10px; border:2px solid rgba(255,255,255,0.18);
-    background:rgba(255,255,255,0.05); color:var(--ink); font-weight:800; font-size:13px; cursor:pointer; }
-  .lbfilter button[aria-pressed="true"]{ border-color:var(--lane); background:rgba(94,224,255,0.15); }
-  #lbList{ min-height:120px; max-height:44vh; overflow:auto; margin-bottom:14px; }
-  .lbrow{ display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:10px; margin-bottom:5px; background:rgba(255,255,255,0.04); }
-  .lbrow.me{ border-left:4px solid var(--lane); background:rgba(94,224,255,0.12); }
-  .lbrank{ font-weight:900; width:36px; text-align:center; opacity:0.85; }
-  .lbrow.top1 .lbrank{ color:#ffd23f; } .lbrow.top2 .lbrank{ color:#cfe0ff; } .lbrow.top3 .lbrank{ color:#ffb072; }
-  .lbname{ flex:1; font-weight:800; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .lbtag{ font-size:9px; font-weight:900; text-transform:uppercase; opacity:0.6; }
-  .lbscore{ font-weight:900; color:var(--warn); }
-  .lbnote{ text-align:center; opacity:0.85; font-size:13px; padding:22px 10px; line-height:1.5; }
-  .lbnote .big{ font-size:28px; display:block; margin-bottom:6px; }
-  .lbsub{ font-size:13px; opacity:0.85; margin:6px 0; }
-  /* name entry on game over */
-  #nameEntry{ margin:6px 0 12px; }
-  .nerow{ display:flex; gap:8px; }
-  #nameInput{ flex:1; min-width:0; padding:11px 12px; border-radius:12px; border:2px solid rgba(94,224,255,0.35);
-    background:#0a1330; color:var(--ink); font-family:inherit; font-weight:800; font-size:15px; }
-  #nameInput:focus{ outline:none; border-color:var(--lane); }
-  #submitScore{ width:auto; padding:11px 18px; font-size:15px; }
-  #submitMsg.good{ color:var(--good); } #submitMsg.warn{ color:var(--warn); }
-  .best{ margin-top:12px; font-weight:800; opacity:0.85; }
-  .best b{ color:var(--warn); font-size:20px; }
-  .err{ color:var(--bad); font-weight:800; margin-top:12px; font-size:13px; }
-  .loadwrap{ margin-top:14px; font-size:13px; opacity:0.85; }
-  .spinner{ display:inline-block; width:16px; height:16px; border:3px solid rgba(255,255,255,0.25); border-top-color:var(--lane); border-radius:50%; animation:spin 0.8s linear infinite; vertical-align:-3px; margin-right:6px; }
-  @keyframes spin{ to{ transform:rotate(360deg); } }
-  @media (prefers-reduced-motion:reduce){ .spinner{ animation:none; } .btn:active{ transform:none; } }
-  .gostat{ display:flex; gap:10px; margin:14px 0 16px; }
-  .gostat .s{ flex:1; background:rgba(124,92,255,0.14); border:2px solid rgba(124,92,255,0.5); border-radius:14px; padding:10px 6px; }
-  .gostat .n{ font-size:26px; font-weight:900; color:var(--p1); }
-  .gostat .l{ font-size:10px; text-transform:uppercase; letter-spacing:1px; opacity:0.7; font-weight:800; }
+  a.card:hover, a.card:focus-visible{
+    transform:translateY(-4px); border-color:transparent; outline:none;
+    box-shadow:0 18px 50px -12px color-mix(in srgb, var(--accent,var(--cyan)) 55%, transparent);
+  }
+  a.card:hover::before, a.card:focus-visible::before{ opacity:1; }
+
+  .thumb{
+    width:64px; height:64px; border-radius:16px; display:grid; place-items:center;
+    font-size:34px; margin-bottom:16px;
+    background:radial-gradient(circle at 35% 30%, color-mix(in srgb,var(--accent,var(--cyan)) 35%, transparent), rgba(0,0,0,.2));
+    border:1px solid var(--line);
+  }
+  .card h2{ font-size:22px; margin:0 0 6px; font-weight:900; }
+  .tags{ display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; }
+  .tag{
+    font-size:10px; letter-spacing:1px; text-transform:uppercase; font-weight:800;
+    color:var(--accent,var(--cyan)); border:1px solid var(--line); padding:3px 8px; border-radius:999px;
+    background:rgba(255,255,255,.03);
+  }
+  .card p{ color:var(--muted); font-size:14px; line-height:1.5; margin:0 0 18px; }
+  .play{
+    margin-top:auto; align-self:flex-start; font-weight:900; font-size:14px; letter-spacing:.5px;
+    padding:10px 18px; border-radius:12px; color:#0c1022;
+    background:linear-gradient(90deg,var(--accent,var(--cyan)),#fff 220%);
+  }
+
+  .badge{
+    position:absolute; top:16px; right:16px; font-size:10px; font-weight:900; letter-spacing:1.5px;
+    padding:5px 10px; border-radius:999px; color:#0c1022; background:var(--green);
+    box-shadow:0 0 20px color-mix(in srgb,var(--green) 60%, transparent);
+  }
+
+  /* coming-soon ghost card */
+  .card.soon{ border-style:dashed; opacity:.6; cursor:default; }
+  .card.soon .thumb{ filter:grayscale(1); opacity:.7; }
+  .card.soon .play{ background:var(--line); color:var(--muted); }
+
+  footer{ text-align:center; color:var(--muted); font-size:13px; margin-top:56px; }
+  footer a{ color:var(--cyan); text-decoration:none; }
 </style>
 </head>
 <body>
-<div id="app">
-  <canvas id="game"></canvas>
+  <div class="bg" aria-hidden="true"><div class="sun"></div><div class="grid"></div></div>
 
-  <!-- The webcam is only a frame SOURCE; the camera panel (video + skeleton +
-       lane lines) is painted onto #game so it composites reliably. Keep the
-       element on-page (tiny, near-invisible) so it keeps decoding frames. -->
-  <video id="cam" playsinline muted autoplay></video>
+  <div class="wrap">
+    <header class="hero">
+      <span class="kicker">Webcam · Motion · No controller</span>
+      <h1>MOTION ARCADE</h1>
+      <p class="sub">Browser games you play with your body. Stand up, turn on your camera, and move.</p>
+      <p class="count"><b id="playable">0</b> games playable · more on the way</p>
+    </header>
 
-  <!-- HUD -->
-  <div id="hud" class="hidden" style="display:none">
-    <div class="stat"><div class="k">Score</div><div class="v" id="scoreV">0</div></div>
-    <div class="mini">
-      <div class="stat"><div class="k">Speed</div><div class="v" id="speedV">1.0×</div></div>
-      <div class="stat"><div class="k">Best</div><div class="v" id="bestV">0</div></div>
-    </div>
+    <main class="games" id="games"></main>
+
+    <footer>
+      Built by <a href="https://github.com/DIVIJ08070" target="_blank" rel="noopener">DIVIJ08070</a> ·
+      more games dropping soon 🎮
+    </footer>
   </div>
 
-  <div id="topbtns" class="hidden" style="display:none">
-    <button class="iconbtn" id="muteBtn" title="Mute">🔊</button>
-    <button class="iconbtn" id="camBtn" title="Enlarge camera">🔍</button>
-  </div>
-
-  <!-- ready lobby: gesture OR button to start -->
-  <div id="readyBar" class="hidden" style="display:none">
-    <div class="chip big" id="readyHint">✌️ <b>Show a peace sign</b> to start</div>
-    <button class="btn go" id="startBtn">▶ Start now</button>
-  </div>
-
-  <!-- control feedback -->
-  <div id="feedback" class="hidden" style="display:none">
-    <div class="chip"><span class="lanedots"><span class="ld" id="ld0"></span><span class="ld on" id="ld1"></span><span class="ld" id="ld2"></span></span></div>
-    <div class="chip" id="jumpChip">⬆ JUMP</div>
-    <div class="chip" id="duckChip">⬇ SLIDE</div>
-    <div class="chip" id="punchChip">👊 PUNCH</div>
-    <div class="chip">🏃 <span class="cad"><span id="cadBar"></span></span></div>
-  </div>
-
-  <!-- touch boost pad (shown only for touch controls during play) -->
-  <button id="boostPad" class="hidden" style="display:none">BOOST</button>
-
-  <!-- skip the opening animation -->
-  <button id="skipIntro" class="hidden" style="display:none">Skip ▸</button>
-
-  <!-- START -->
-  <div class="screen" id="startScreen">
-    <div class="card">
-      <h1 class="title"><span class="a">BODY</span><span class="b">DASH</span></h1>
-      <div class="sub">An endless neon runner you play with your <b>whole body</b> — or with <b>keys</b> and <b>swipes</b>. Dodge, jump, slide, and punch down the road!</div>
-      <div class="diffrow" id="diffRow">
-        <button data-diff="chill">Chill</button>
-        <button data-diff="normal" aria-pressed="true">Normal</button>
-        <button data-diff="intense">Intense</button>
-      </div>
-      <button class="btn" id="playBtn">▶ Play with camera</button>
-      <div class="ctarow">
-        <button class="btn ghost" id="playKeysBtn">⌨ Keys</button>
-        <button class="btn ghost" id="playTouchBtn">☝ Touch</button>
-      </div>
-      <div class="linkrow">
-        <button class="linkbtn" id="howToBtn">How to play</button>
-        <button class="linkbtn" id="lbBtn">🏆 Leaderboard</button>
-      </div>
-      <div class="loadwrap hidden" id="loadWrap"><span class="spinner"></span><span id="loadMsg">Loading models…</span></div>
-      <div class="err hidden" id="errMsg"></div>
-      <div class="best">Best score: <b id="bestStart">0</b></div>
-    </div>
-  </div>
-
-  <!-- GAME OVER -->
-  <div class="screen hidden" id="overScreen" style="display:none">
-    <div class="card">
-      <h1 class="title"><span class="a" style="color:var(--bad)">GAME</span><span class="b" style="color:var(--warn)">OVER</span></h1>
-      <div class="sub" id="overSub">You crashed! Catch your breath and go again.</div>
-      <div class="gostat">
-        <div class="s"><div class="n" id="overScore">0</div><div class="l">Score</div></div>
-        <div class="s"><div class="n" id="overDist">0m</div><div class="l">Distance</div></div>
-        <div class="s"><div class="n" id="overBest">0</div><div class="l">Best</div></div>
-      </div>
-      <div id="newBest" class="hidden" style="color:var(--good);font-weight:900;margin-bottom:8px">🎉 New personal best!</div>
-      <div id="nameEntry" class="hidden">
-        <div class="lbsub" id="nameEntryPrompt">Add your name to the leaderboard?</div>
-        <div class="nerow">
-          <input id="nameInput" maxlength="20" placeholder="Your name" autocomplete="off" spellcheck="false" />
-          <button class="btn" id="submitScore">Submit</button>
-        </div>
-        <div class="lbsub" id="submitMsg"></div>
-      </div>
-      <div class="chip big" id="restartHint" style="margin:0 auto 12px">🧍 <b>Make a T-shape</b> to restart</div>
-      <button class="btn" id="againBtn">▶ RUN AGAIN</button>
-      <button class="btn ghost" id="overLbBtn" style="margin-top:10px">🏆 Leaderboard</button>
-      <button class="btn ghost" id="homeBtn" style="margin-top:10px">Home</button>
-    </div>
-  </div>
-
-  <!-- LEADERBOARD -->
-  <div class="screen hidden" id="lbScreen" style="display:none">
-    <div class="card">
-      <h1 class="title" style="margin-bottom:8px"><span class="a">🏆 LEADER</span><span class="b">BOARD</span></h1>
-      <div class="lbfilter" id="lbFilter">
-        <button data-diff="chill">Chill</button>
-        <button data-diff="normal" aria-pressed="true">Normal</button>
-        <button data-diff="intense">Intense</button>
-      </div>
-      <div id="lbList"><div class="lbnote">Loading…</div></div>
-      <div class="nerow">
-        <button class="btn" id="lbPlay">▶ Play</button>
-        <button class="btn ghost" id="lbClose" style="width:auto;padding:15px 20px">Close</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- HOW TO PLAY -->
-  <div class="screen hidden" id="howScreen" style="display:none">
-    <div class="card">
-      <h1 class="title" style="margin-bottom:8px"><span class="a">HOW TO</span><span class="b">PLAY</span></h1>
-      <div class="sub">One game, three ways to control it. Clear the neon road as far as you can!</div>
-      <table class="howtbl">
-        <tr><th></th><th>📷 Camera</th><th>⌨ Keys</th><th>☝ Touch</th></tr>
-        <tr><td class="act">Change lane</td><td>Step left / right</td><td>◄ ► &nbsp;/&nbsp; A D</td><td>Swipe ◄ ►</td></tr>
-        <tr><td class="act">⬆ Jump <span class="ob y">yellow</span></td><td>Jump up</td><td>▲ / W / Space</td><td>Swipe up</td></tr>
-        <tr><td class="act">⬇ Slide <span class="ob p">purple</span></td><td>Crouch down</td><td>▼ / S</td><td>Swipe down</td></tr>
-        <tr><td class="act">👊 Punch <span class="ob o">orange</span></td><td>Throw a punch</td><td>F / J</td><td>Tap</td></tr>
-        <tr><td class="act">🏃 Boost</td><td>Run in place</td><td>Hold Shift</td><td>Hold BOOST</td></tr>
-        <tr><td class="act">◧ Dodge <span class="ob k">pink</span></td><td colspan="3">Pink walls can't be jumped, ducked or punched — change lane to dodge them.</td></tr>
-      </table>
-      <button class="btn" id="howClose">Got it ▸</button>
-    </div>
-  </div>
-</div>
-
-<!-- MediaPipe Pose (body skeleton for gameplay) + Hands (✌️ start gesture). CDN. -->
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 <script>
-"use strict";
-/* =========================================================================
-   Body Dash — a webcam motion-controlled 3-lane endless runner.
-   Your body is the controller: step to change lane, jump to hop, run to boost.
-   Pose skeleton via MediaPipe Pose; everything else is hand-written canvas.
-   ========================================================================= */
-
-/* --------------------------- pure decision logic --------------------------
-   Extracted + covered by tests/logic.test.js. These turn raw body signals
-   into game intents, with hysteresis / adaptivity so they feel stable. */
-const clamp=(v,a,b)=>v<a?a:(v>b?b:v);
-const lerp=(a,b,t)=>a+(b-a)*t;
-
-// Choose a lane (0,1,2) from a mirrored body-centre x in [0,1], keeping the
-// current lane inside a dead-zone around the 1/3 & 2/3 boundaries (anti-jitter).
-function pickLane(x, cur, h){
-  h=(h==null)?0.06:h;
-  if(x < 1/3 - h) return 0;
-  if(x > 2/3 + h) return 2;
-  if(x > 1/3 + h && x < 2/3 - h) return 1;
-  return cur; // near a boundary -> hold
-}
-// Preferred lane picker: from the SIGNED offset of your body from your OWN learned
-// neutral centre. Symmetric left/right regardless of where you stand or how the
-// webcam is framed. `step` = how far to move to trigger a side lane; `h` = hysteresis.
-function pickLaneOffset(off, cur, step, h){
-  step=(step==null)?0.11:step; h=(h==null)?0.035:h;
-  if(off <= -step) return 0;                         // stepped left
-  if(off >=  step) return 2;                         // stepped right
-  if(off > -(step-h) && off < (step-h)) return 1;    // came back near centre
-  return cur;                                        // in the hysteresis band -> hold
-}
-// How far (in mirrored-x, 0..1) you must move off centre to switch lane. Scales with
-// shoulder width so one real side-step triggers a lane change whether near or far.
-function laneStep(shoulderW){ return clamp(shoulderW*0.55, 0.05, 0.13); }
-// Jump trigger: body rose above baseline by more than an adaptive threshold
-// (threshold scales with torso length so it works near or far from the camera).
-function jumpThreshold(torsoLen){ return clamp(0.34*torsoLen, 0.045, 0.13); }
-// `th` optionally overrides the size-based threshold with a value MEASURED during the
-// guided calibration (your own jump height), so triggers match how far you actually move.
-function isJumpTrigger(curY, prevY, baselineY, torsoLen, th){
-  th=(th==null)?jumpThreshold(torsoLen):th;
-  return (baselineY - curY) > th && curY < prevY; // higher in frame (smaller y) & still rising
-}
-// Duck / slide trigger: the mirror image of a jump — body dropped BELOW baseline.
-function isDuckTrigger(curY, prevY, baselineY, torsoLen, th){
-  th=(th==null)?jumpThreshold(torsoLen):th;
-  return (curY - baselineY) > th && curY > prevY; // lower in frame (bigger y) & still dropping
-}
-// 👊 Punch: a fast jab of a wrist while the fist is raised to chest height or above.
-// Speed is normalised by torso so it fires the same near or far; the raised-height
-// gate rejects the low arm-swing of running-in-place (which stays down by the hips),
-// so crates stay a real challenge instead of auto-smashing while you jog.
-function isPunch(wrist, prevWrist, shoulderY, torsoLen){
-  if(!wrist || !prevWrist || torsoLen<=0) return false;
-  const raised = wrist.y < shoulderY + torsoLen*0.35;                    // fist at chest+ height
-  const speed  = Math.hypot(wrist.x-prevWrist.x, wrist.y-prevWrist.y)/torsoLen;
-  return raised && speed > 0.30;                                         // thrown fast
-}
-// Running level 0..1 from leg-landmark vertical motion energy, normalised by torso.
-function runningLevel(energy, torsoLen){
-  const norm = torsoLen>0 ? energy/(torsoLen) : 0;
-  return clamp(norm/0.9, 0, 1);
-}
-// ✌️ Victory / peace sign from 21 MediaPipe Hand landmarks: index + middle fingers
-// extended (up), ring + pinky folded (down), and the two up-fingers spread apart.
-// Assumes the hand is held roughly upright (how people naturally flash a peace sign).
-function isVictory(h){
-  if(!h || h.length<21) return false;
-  const up=(tip,pip)=> (h[pip].y - h[tip].y) > 0.04;   // tip clearly above its knuckle
-  const index=up(8,6), middle=up(12,10), ring=up(16,14), pinky=up(20,18);
-  if(!(index && middle) || ring || pinky) return false; // only index+middle up
-  const spread=Math.hypot(h[8].x-h[12].x, h[8].y-h[12].y);
-  const size=Math.hypot(h[0].x-h[9].x, h[0].y-h[9].y)+1e-6; // wrist->middle-knuckle
-  return spread/size > 0.30;                             // a V, not two fingers together
-}
-// 🧍 T-pose from Pose landmarks: both arms stretched out sideways at shoulder height.
-// Wrists spread far wider than the shoulders and sit near shoulder level (arms level).
-function isTpose(lm){
-  if(!lm) return false;
-  const vis=i=>lm[i]&&(lm[i].visibility===undefined||lm[i].visibility>0.5);
-  if(!(vis(11)&&vis(12)&&vis(15)&&vis(16))) return false;
-  const shY=(lm[11].y+lm[12].y)/2;
-  const shW=Math.abs(lm[11].x-lm[12].x)+1e-6;
-  const span=Math.abs(lm[15].x-lm[16].x);          // wrist-to-wrist width
-  if(span < shW*2.2) return false;                 // arms must be stretched out wide
-  const tol=shW*0.9;                               // ...and roughly at shoulder height
-  return Math.abs(lm[15].y-shY)<tol && Math.abs(lm[16].y-shY)<tol;
-}
-// Which detector the frame pump must run for a given screen. The ✌️ lobby needs Hands;
-// calibration, play and game-over all need the body Pose (calib was the bug — it drove
-// no detector, so "stand still" never got landmarks and hung).
-function detectorFor(screen){
-  if(screen==='ready') return 'hands';
-  if(screen==='calib'||screen==='play'||screen==='over') return 'pose';
-  return null;
-}
-if(typeof module!=='undefined'&&module.exports){
-  module.exports={pickLane,pickLaneOffset,laneStep,jumpThreshold,isJumpTrigger,isDuckTrigger,isPunch,runningLevel,isVictory,isTpose,detectorFor,clamp,lerp};
-}
-
-/* --------------------------------- audio --------------------------------- */
-const Sound=(()=>{
-  let ctx=null, muted=false;
-  const on=()=>{ if(!ctx){ try{ctx=new (window.AudioContext||window.webkitAudioContext)();}catch(e){} } if(ctx&&ctx.state==='suspended')ctx.resume(); };
-  function blip(f,d,type,v){ if(muted||!ctx)return; const t=ctx.currentTime,o=ctx.createOscillator(),g=ctx.createGain();
-    o.type=type||'sine'; o.frequency.setValueAtTime(f,t); g.gain.setValueAtTime(0.0001,t);
-    g.gain.exponentialRampToValueAtTime(v||0.12,t+0.01); g.gain.exponentialRampToValueAtTime(0.0001,t+(d||0.12));
-    o.connect(g).connect(ctx.destination); o.start(t); o.stop(t+(d||0.12)+0.02); }
-  return { on, setMuted:m=>muted=m, isMuted:()=>muted,
-    lane:()=>blip(520,0.06,'square',0.08),
-    jump:()=>{ blip(440,0.09,'triangle',0.12); setTimeout(()=>blip(760,0.09,'triangle',0.1),70); },
-    duck:()=>{ blip(300,0.1,'triangle',0.12); setTimeout(()=>blip(180,0.14,'triangle',0.1),70); },
-    punch:()=>blip(200,0.05,'square',0.1),
-    smash:()=>{ blip(320,0.07,'sawtooth',0.14); setTimeout(()=>blip(150,0.12,'square',0.12),40); setTimeout(()=>blip(90,0.16,'sawtooth',0.1),95); },
-    coin:()=>blip(1040,0.07,'triangle',0.09),
-    crash:()=>{ blip(160,0.4,'sawtooth',0.16); setTimeout(()=>blip(90,0.5,'sawtooth',0.14),110); },
-    start:()=>{ [440,554,659,880].forEach((f,i)=>setTimeout(()=>blip(f,0.12,'triangle',0.1),i*90)); } };
-})();
-
-/* ------------------------------- DOM refs -------------------------------- */
-const $=id=>document.getElementById(id);
-const gcv=$('game'), gx=gcv.getContext('2d');
-const video=$('cam');
-let camStatus='';
-const REDUCED=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)').matches;
-
-let DPR=1, W=0, H=0;
-function resize(){
-  DPR=Math.min(window.devicePixelRatio||1,2);
-  W=window.innerWidth; H=window.innerHeight;
-  gcv.width=W*DPR; gcv.height=H*DPR; gcv.style.width=W+'px'; gcv.style.height=H+'px';
-  gx.setTransform(DPR,0,0,DPR,0,0);
-}
-// screen-space rectangle of the camera panel (top-right, or centred when big)
-function panelRect(){
-  if(G.camBig){ const w=Math.min(W*0.8,560), h=w*0.75; return {x:(W-w)/2,y:Math.max(12,(H-h)/2-30),w,h}; }
-  const w=clamp(W*0.30,220,360), h=w*0.75; return {x:W-w-12, y:12, w, h};
-}
-window.addEventListener('resize',resize);
-
-/* ------------------------------ game state ------------------------------- */
-// Tuned for FAIRNESS: a hard effective-speed cap keeps the reaction budget humane, and
-// the corridor spawner (doSpawn) guarantees every pattern is solvable. baseSpeed ramps to
-// speedCap; boost adds at most 25% and the total is clamped to Vcap. minGap = seconds
-// between obstacles at the hit plane (always > the jump/duck commit windows).
-const DIFF={
-  chill:  {name:'Chill',  baseSpeed:6,   speedCap:8,    Vcap:10,   ramp:0.017, spawnBase:1.9,  spawnFloor:1.35, minGap:1.35, pAction:0.35, pDodge:0.45},
-  normal: {name:'Normal', baseSpeed:7.5, speedCap:10,   Vcap:12.5, ramp:0.025, spawnBase:1.6,  spawnFloor:1.15, minGap:1.15, pAction:0.40, pDodge:0.48},
-  intense:{name:'Intense',baseSpeed:9.5, speedCap:12.4, Vcap:15.5, ramp:0.036, spawnBase:1.35, spawnFloor:1.0,  minGap:1.0,  pAction:0.45, pDodge:0.50}
-};
-const FOCAL=7.5, ZFAR=26, ZHIT=0.55;
-
-const G={
-  screen:'start', diffKey:'normal',
-  running:false, best:0,
-  introT:0, _introKick:false,   // opening title animation
-  // player
-  lane:1, laneX:0, jump:{active:false,t:0,dur:0.62,peak:1}, duck:{active:false,t:0,dur:0.7}, duckCooldown:0,
-  punch:{active:false,t:0,dur:0.35}, punchCooldown:0,
-  calib:{idx:0, steps:['still','jump','lane','duck','ready'], t:0, confirm:0, doneFlash:0,
-         n:0, sx:0, sy:0, st:0, jumpRise:0, duckDrop:0, laneReach:0, done:false},
-  // controls: 'webcam' | 'keyboard' | 'touch'; boostHeld drives boost for key/touch
-  control:'webcam', boostHeld:false,
-  // character animation dynamics (banking, landing spring, scarf, impact rings)
-  prevLaneX:0, roll:0, laneVel:0, squash:1, squashV:0, wasAir:false, rings:[], scarf:null,
-  // world
-  obstacles:[], particles:[], stars:[], mtns:[], mtns2:[], spawnTimer:0, dist:0, score:0, speed:0, baseSpeed:0, boost:0,
-  // corridor spawner state (guarantees a solvable path exists)
-  plannedLane:1, lastStepWasAction:false, firstSpawn:true,
-  // body signals (jumpTh/duckTh: personalised thresholds set by the guided calibration)
-  body:{seen:false, x:0.5, baseX:0.5, step:0.11, prevY:0.5, baseY:0.5, torso:0.25, runLevel:0, lastLm:null, jumpTh:null, duckTh:null},
-  poseLm:null, camBig:false,
-  // start-gesture (ready lobby) + T-pose restart
-  handLm:null, gesture:{victory:false, hold:0, tpose:false, tHold:0},
-  jumpCooldown:0,
-  shake:0, flash:0,
-};
-const GESTURE_HOLD=0.6; // seconds a ✌️ must be held to start
-
-/* --------------------------- projection helpers -------------------------- */
-function horizonY(){ return H*0.40; }
-function groundY(){ return H*0.90; }
-function pfOf(z){ return FOCAL/(FOCAL+Math.max(0,z)); }             // 1 near .. 0 far
-function screenYOf(pf){ return horizonY()+(groundY()-horizonY())*pf; }
-function halfRoad(pf){ return lerp(W*0.03, W*0.44, pf); }
-function laneCenterX(laneIdx, pf){ return W*0.5 + (laneIdx-1)*halfRoad(pf)*0.62; }
-
-/* -------------------------------- camera --------------------------------- */
-let pose=null, hands=null, camStream=null, initialized=false, sending=false;
-let poseSeen=false, handsSeen=false;
-async function initCameraAndPose(){
-  if(typeof Pose==='undefined' || typeof Hands==='undefined')
-    throw new Error('Tracking libraries did not load — check your internet connection (needed once to download the models).');
-  // camera
-  camStream=await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'user', width:{ideal:640}, height:{ideal:480} }, audio:false });
-  video.srcObject=camStream; await video.play().catch(()=>{});
-  // pose (body -> gameplay)
-  pose=new Pose({ locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}` });
-  pose.setOptions({ modelComplexity:1, smoothLandmarks:true, enableSegmentation:false,
-    minDetectionConfidence:0.5, minTrackingConfidence:0.5 });
-  pose.onResults(onPoseResults);
-  // hands (✌️ -> start gesture)
-  hands=new Hands({ locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
-  hands.setOptions({ maxNumHands:1, modelComplexity:0, minDetectionConfidence:0.6, minTrackingConfidence:0.5 });
-  hands.onResults(onHandsResults);
-  // warm both models so the lobby & first round are responsive
-  $('loadMsg').textContent='Warming up body tracking…';
-  await warmUp(()=>pose.send({image:video}), ()=>poseSeen);
-  $('loadMsg').textContent='Warming up gesture…';
-  await warmUp(()=>hands.send({image:video}), ()=>handsSeen);
-  initialized=true;
-  startPump();
-}
-async function warmUp(sendOnce, done){
-  for(let i=0;i<150 && !done();i++){
-    if(video.readyState>=2){ try{ await sendOnce(); }catch(e){} }
-    if(done()) break;
-    await new Promise(r=>requestAnimationFrame(r));
-  }
-}
-// single detector pump — routes each frame to the model the current screen needs
-async function startPump(){
-  async function loop(){
-    if(!sending && video.readyState>=2){
-      sending=true;
-      try{
-        const which=detectorFor(G.screen);
-        if(which==='hands' && hands) await hands.send({image:video});
-        else if(which==='pose' && pose) await pose.send({image:video});
-      }catch(e){}
-      sending=false;
+  /* ============================================================
+     ADD A NEW GAME:  copy one block below, change the fields,
+     drop your game's .html file in this folder, and set `href`.
+     Set soon:true for a "coming soon" placeholder (no link).
+     ============================================================ */
+  const GAMES = [
+    {
+      title: "Body Dash 3D",
+      emoji: "🏃",
+      href:  "game3d.html",
+      accent:"#7c5cff",
+      badge: "NEW",
+      tags:  ["3D", "Endless Runner", "Full-body"],
+      desc:  "A 3D endless runner controlled by your whole body. Jump, duck, and switch lanes with real movement."
+    },
+    {
+      title: "Body Dash · Classic 2D",
+      emoji: "🕹️",
+      href:  "body-dash-2d.html",
+      accent:"#5ee0ff",
+      tags:  ["2D", "Endless Runner", "Webcam"],
+      desc:  "The original camera-motion runner. Lean to change lanes, jump to leap, duck to slide — with a live leaderboard."
+    },
+    {
+      title: "Your next game",
+      emoji: "✨",
+      soon:  true,
+      accent:"#ff5da2",
+      tags:  ["Coming soon"],
+      desc:  "This slot is waiting. Build it, drop the file in, add one entry here, and it's live."
     }
-    requestAnimationFrame(loop);
-  }
-  loop();
-}
+  ];
 
-// hand-skeleton connections (21-landmark MediaPipe Hands)
-const HCON=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],
-  [9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
-function onHandsResults(res){
-  handsSeen=true;
-  const list=res.multiHandLandmarks;
-  if(list && list.length){ G.handLm=list[0]; G.gesture.victory=isVictory(list[0]); }
-  else { G.handLm=null; G.gesture.victory=false; }
-}
-
-// skeleton connections (BlazePose indices) for the "structure frame"
-const CON=[[11,12],[11,23],[12,24],[23,24],[11,13],[13,15],[12,14],[14,16],
-  [23,25],[25,27],[24,26],[26,28],[27,29],[29,31],[28,30],[30,32],[27,31],[28,32],
-  [15,17],[15,19],[15,21],[16,18],[16,20],[16,22],[0,11],[0,12]];
-
-function onPoseResults(res){
-  poseSeen=true;
-  const lm=res.poseLandmarks;
-  G.poseLm = lm||null;          // stored; the panel is drawn on the game canvas
-  if(!lm){ G.body.seen=false; return; }
-  const vis=i=>lm[i]&&(lm[i].visibility===undefined||lm[i].visibility>0.5);
-  // SHOULDERS are the anchor: almost always visible & stable. We only need them
-  // to steer, so controls don't freeze when your legs/hips leave the frame.
-  if(!(vis(11)&&vis(12))){ G.body.seen=false; return; }
-  G.body.seen=true;
-  const shoX=(lm[11].x+lm[12].x)/2, shoY=(lm[11].y+lm[12].y)/2;
-  const shoulderW=Math.max(0.04, Math.abs(lm[11].x-lm[12].x));   // ~ body size in frame
-  const mirX=1-shoX;                                             // mirrored (selfie)
-  G.body.x = lerp(G.body.x, mirX, 0.6);                          // light de-jitter
-  // vertical anchor for jumps: hips if visible, else shoulders; torso for scaling
-  const hipsOk=vis(23)&&vis(24);
-  const anchorY = hipsOk ? (lm[23].y+lm[24].y)/2 : shoY;
-  const torso = hipsOk ? Math.abs(anchorY-shoY) : shoulderW*1.6;
-  // a lane step scales with body size (one real side-step ≈ constant, near or far) —
-  // but once you've calibrated, we freeze the step you personally demonstrated.
-  if(!G.calib.done) G.body.step = laneStep(shoulderW);
-  G.body.torso=torso;
-  // running energy from legs (0 if legs unseen — boost just won't fill)
-  const prevLm=G.body.lastLm;
-  if(prevLm){
-    let e=0; [25,26,27,28].forEach(i=>{ if(lm[i]&&prevLm[i]&&vis(i)) e+=Math.abs(lm[i].y-prevLm[i].y); });
-    G.body.runLevel = lerp(G.body.runLevel, runningLevel(e, torso), 0.4);
+  const el = document.getElementById('games');
+  let playable = 0;
+  for (const g of GAMES){
+    const soon = !!g.soon;
+    if (!soon) playable++;
+    const card = document.createElement(soon ? 'div' : 'a');
+    card.className = 'card' + (soon ? ' soon' : '');
+    if (!soon){ card.href = g.href; }
+    card.style.setProperty('--accent', g.accent || '#5ee0ff');
+    card.innerHTML = `
+      ${g.badge ? `<span class="badge">${g.badge}</span>` : ''}
+      <div class="thumb">${g.emoji || '🎮'}</div>
+      <h2>${g.title}</h2>
+      <div class="tags">${(g.tags||[]).map(t=>`<span class="tag">${t}</span>`).join('')}</div>
+      <p>${g.desc || ''}</p>
+      <span class="play">${soon ? 'Coming soon' : 'Play ▸'}</span>`;
+    el.appendChild(card);
   }
-  G.body.lastLm=lm.map(p=>({x:p.x,y:p.y}));
-  // ---- drive the game ----
-  if(G.screen==='play' && G.running){
-    // lane = which zone your body sits in, relative to your OWN learned centre.
-    const st=G.body.step, off=G.body.x - G.body.baseX;
-    // Re-centre the neutral ONLY while you're standing near it — never mid-step. If we
-    // kept chasing your body as you step, the offset could never build past the trigger
-    // and stepping would do nothing. Freezing once you leave the dead-zone lets a real
-    // step register, while the slow drift near centre still absorbs standing wobble.
-    if(G.lane===1 && Math.abs(off) < st*0.45) G.body.baseX = lerp(G.body.baseX, G.body.x, 0.05);
-    const nl=pickLaneOffset(off, G.lane, st, st*0.30);
-    if(nl!==G.lane){ G.lane=nl; Sound.lane(); updateLaneDots(); }
-    // jump (rise) or duck/slide (drop) — one at a time, while grounded.
-    // Thresholds prefer your calibrated jumpTh/duckTh, falling back to the size-based one.
-    const grounded=!G.jump.active && !G.duck.active;
-    if(grounded && G.jumpCooldown<=0 && isJumpTrigger(anchorY, G.body.prevY, G.body.baseY, torso, G.body.jumpTh)) triggerJump();
-    else if(grounded && G.duckCooldown<=0 && isDuckTrigger(anchorY, G.body.prevY, G.body.baseY, torso, G.body.duckTh)) triggerDuck();
-    // punch: a fast jab of either wrist (raised to chest height) smashes crates
-    if(G.punchCooldown<=0 && prevLm &&
-       ((vis(15)&&prevLm[15]&&isPunch(lm[15],prevLm[15],shoY,torso)) ||
-        (vis(16)&&prevLm[16]&&isPunch(lm[16],prevLm[16],shoY,torso)))) triggerPunch();
-    // baseline follows the body only while grounded
-    if(grounded) G.body.baseY = lerp(G.body.baseY, anchorY, 0.06);
-    G.body.prevY=anchorY;
-  } else if(G.screen==='calib'){
-    // guided calibration: while 'still' we learn the neutral; during an action step we
-    // MEASURE how far you move (your own jump height / step reach / duck depth).
-    const c=G.calib, stp=c.steps[c.idx];
-    if(stp==='still'){
-      G.body.baseX=G.body.x; G.body.baseY=anchorY; G.body.prevY=anchorY;
-      c.n++; c.sx+=G.body.x; c.sy+=anchorY; c.st+=torso; c.sw+=shoulderW;
-    } else {
-      if(stp==='jump') c.jumpRise=Math.max(c.jumpRise, G.body.baseY - anchorY);   // rose above neutral
-      else if(stp==='duck') c.duckDrop=Math.max(c.duckDrop, anchorY - G.body.baseY); // dropped below
-      else if(stp==='lane') c.laneReach=Math.max(c.laneReach, Math.abs(G.body.x - G.body.baseX));
-      G.body.prevY=anchorY;
-    }
-  } else if(G.screen==='over'){
-    // watch for a 🧍 T-pose to restart (progress accumulated in the frame loop)
-    G.gesture.tpose = isTpose(lm);
-    G.body.baseX=G.body.x; G.body.prevY=anchorY;
-  } else {
-    // not playing: keep learning the neutral standing position
-    G.body.baseX=G.body.x; G.body.baseY=anchorY; G.body.prevY=anchorY;
-  }
-}
-
-// The camera panel is painted straight onto the main game canvas (gx) inside the
-// panelRect(). Everything (mirrored video, lane lines, skeleton) is in that box.
-function drawCamPanel(){
-  const R=panelRect(), x=R.x, y=R.y, w=R.w, h=R.h;
-  const lm=G.poseLm;
-  gx.save();
-  // panel frame + shadow
-  gx.shadowColor='rgba(0,0,0,0.5)'; gx.shadowBlur=18; gx.shadowOffsetY=6;
-  roundRect(x,y,w,h,16); gx.fillStyle='#05070f'; gx.fill();
-  gx.shadowColor='transparent'; gx.shadowBlur=0; gx.shadowOffsetY=0;
-  // paint the mirrored webcam frame, clipped to the rounded panel
-  gx.save(); roundRect(x,y,w,h,16); gx.clip();
-  const vw=video.videoWidth||0, vh=video.videoHeight||0;
-  if(vw&&vh){
-    const scale=Math.max(w/vw,h/vh), dw=vw*scale, dh=vh*scale;
-    gx.save(); gx.translate(x+w,y); gx.scale(-1,1);        // mirror horizontally
-    gx.drawImage(video,(w-dw)/2,(h-dh)/2,dw,dh); gx.restore();
-  } else { gx.fillStyle='#05070f'; gx.fillRect(x,y,w,h); }
-  gx.restore();  // <-- unclip immediately; overlays below draw within panelRect anyway
-  gx.textAlign='center'; gx.textBaseline='alphabetic';
-  let status;
-  if(G.screen==='ready'){
-    status = drawReadyOverlay(x,y,w,h);
-  } else if(G.screen==='over'){
-    // game-over: watch for a T-pose to restart. Show a hold-progress ring.
-    const p=clamp(G.gesture.tHold/GESTURE_HOLD,0,1);
-    if(p>0){ const cx=x+w/2, cy=y+h*0.42, r=26;
-      gx.lineWidth=6; gx.strokeStyle='rgba(255,255,255,0.18)'; gx.beginPath(); gx.arc(cx,cy,r,0,7); gx.stroke();
-      gx.strokeStyle='#ffd23f'; gx.beginPath(); gx.arc(cx,cy,r,-Math.PI/2,-Math.PI/2+p*Math.PI*2,false); gx.stroke(); }
-    if(lm){
-      const px=i=>x+(1-lm[i].x)*w, py=i=>y+lm[i].y*h;
-      gx.lineWidth=4; gx.strokeStyle=G.gesture.tpose?'#3ef0a0':'rgba(255,93,162,0.95)'; gx.lineCap='round'; gx.beginPath();
-      CON.forEach(([a,b])=>{ if(lm[a]&&lm[b]){ gx.moveTo(px(a),py(a)); gx.lineTo(px(b),py(b)); } });
-      gx.stroke();
-    }
-    status = G.gesture.tpose ? 'hold the T… restarting' : '🧍 make a T-shape to restart';
-  } else if(G.screen==='calib'){
-    // calibration: show the live skeleton + a step-progress ring
-    const p=clamp(G.calib.idx/4,0,1);
-    const cx=x+w/2, cy=y+h*0.42, r=26;
-    gx.lineWidth=6; gx.strokeStyle='rgba(255,255,255,0.18)'; gx.beginPath(); gx.arc(cx,cy,r,0,7); gx.stroke();
-    gx.strokeStyle='#5ee0ff'; gx.beginPath(); gx.arc(cx,cy,r,-Math.PI/2,-Math.PI/2+p*Math.PI*2,false); gx.stroke();
-    if(lm){
-      const px=i=>x+(1-lm[i].x)*w, py=i=>y+lm[i].y*h;
-      gx.lineWidth=4; gx.strokeStyle=(G.calib.confirm>0)?'#3ef0a0':'rgba(94,224,255,0.95)'; gx.lineCap='round'; gx.beginPath();
-      CON.forEach(([a,b])=>{ if(lm[a]&&lm[b]){ gx.moveTo(px(a),py(a)); gx.lineTo(px(b),py(b)); } });
-      gx.stroke();
-    }
-    const stp=G.calib.steps[G.calib.idx];
-    status = !G.body.seen ? 'step back so I can see all of you'
-           : stp==='still' ? 'hold still…' : stp==='jump' ? 'now JUMP!'
-           : stp==='lane' ? 'step to a side' : stp==='duck' ? 'now DUCK!' : 'ready!';
-  } else {
-    // trigger zones relative to YOUR learned centre: two dashed lines at baseX±step
-    // mark where a lane change fires; a bright marker shows your live position.
-    const bx=G.body.baseX, st=G.body.step;
-    const toX=mx=>x+clamp(mx,0,1)*w;                 // mirrored-x -> panel x
-    const lL=toX(bx-st), lR=toX(bx+st);
-    // highlight the current lane's zone
-    gx.fillStyle='rgba(94,224,255,0.16)';
-    if(G.lane===0) gx.fillRect(x,y,lL-x,h);
-    else if(G.lane===2) gx.fillRect(lR,y,x+w-lR,h);
-    else gx.fillRect(lL,y,lR-lL,h);
-    // threshold lines
-    gx.strokeStyle='rgba(94,224,255,0.7)'; gx.lineWidth=2; gx.setLineDash([7,7]);
-    [lL,lR].forEach(lx=>{ gx.beginPath(); gx.moveTo(lx,y); gx.lineTo(lx,y+h); gx.stroke(); });
-    gx.setLineDash([]);
-    // live body-position marker
-    const mx=toX(G.body.x);
-    gx.strokeStyle=G.lane===1?'#5ee0ff':'#3ef0a0'; gx.lineWidth=3;
-    gx.beginPath(); gx.moveTo(mx,y+18); gx.lineTo(mx,y+h-24); gx.stroke();
-    gx.fillStyle=gx.strokeStyle; gx.beginPath(); gx.arc(mx,y+h*0.5,5,0,7); gx.fill();
-    gx.font='700 12px Trebuchet MS'; gx.fillStyle='rgba(255,255,255,0.65)';
-    gx.fillText('◄ LEFT', x+ (lL-x)/2, y+15); gx.fillText('RIGHT ►', lR+(x+w-lR)/2, y+15);
-    if(lm){
-      const px=i=>x+(1-lm[i].x)*w, py=i=>y+lm[i].y*h;
-      gx.lineWidth=4; gx.strokeStyle='rgba(255,93,162,0.95)'; gx.lineCap='round'; gx.beginPath();
-      CON.forEach(([a,b])=>{ if(lm[a]&&lm[b]){ gx.moveTo(px(a),py(a)); gx.lineTo(px(b),py(b)); } });
-      gx.stroke();
-      gx.fillStyle='#5ee0ff';
-      [0,11,12,13,14,15,16,23,24,25,26,27,28].forEach(i=>{ if(lm[i]){ gx.beginPath(); gx.arc(px(i),py(i),4,0,7); gx.fill(); } });
-      let minx=1,miny=1,maxx=0,maxy=0;
-      lm.forEach(p=>{ if(p.visibility===undefined||p.visibility>0.4){ minx=Math.min(minx,p.x);maxx=Math.max(maxx,p.x);miny=Math.min(miny,p.y);maxy=Math.max(maxy,p.y);} });
-      gx.strokeStyle='rgba(62,240,160,0.9)'; gx.lineWidth=2; gx.setLineDash([6,5]);
-      gx.strokeRect(x+(1-maxx)*w, y+miny*h, (maxx-minx)*w, (maxy-miny)*h); gx.setLineDash([]);
-    }
-    status = camStatus||'stand back so your whole body shows';
-  }
-  // status strip
-  gx.fillStyle='rgba(0,0,0,0.6)'; gx.fillRect(x,y+h-22,w,22);
-  gx.font='700 11px Trebuchet MS';
-  gx.fillStyle=(status.indexOf('step back')>=0||status.indexOf('show')>=0)?'#ffd23f':'#9fe8c9';
-  gx.fillText(status, x+w/2, y+h-7);
-  // glowing border
-  gx.strokeStyle='rgba(94,224,255,0.75)'; gx.lineWidth=3; roundRect(x,y,w,h,16); gx.stroke();
-  gx.restore();
-}
-// lobby overlay: draw the hand skeleton + a ✌️ hold-progress ring; returns status text
-function drawReadyOverlay(x,y,w,h){
-  const hl=G.handLm;
-  if(hl){
-    const px=i=>x+(1-hl[i].x)*w, py=i=>y+hl[i].y*h;
-    const col=G.gesture.victory?'#3ef0a0':'rgba(94,224,255,0.9)';
-    gx.lineWidth=3; gx.strokeStyle=col; gx.lineCap='round'; gx.beginPath();
-    HCON.forEach(([a,b])=>{ if(hl[a]&&hl[b]){ gx.moveTo(px(a),py(a)); gx.lineTo(px(b),py(b)); } });
-    gx.stroke();
-    gx.fillStyle=col;
-    for(let i=0;i<21;i++){ gx.beginPath(); gx.arc(px(i),py(i),3,0,7); gx.fill(); }
-  }
-  // hold-progress ring, centre of panel
-  const p=clamp(G.gesture.hold/GESTURE_HOLD,0,1);
-  if(p>0){
-    const cx=x+w/2, cy=y+h*0.42, r=26;
-    gx.lineWidth=6; gx.strokeStyle='rgba(255,255,255,0.18)'; gx.beginPath(); gx.arc(cx,cy,r,0,7); gx.stroke();
-    gx.strokeStyle='#3ef0a0'; gx.beginPath(); gx.arc(cx,cy,r,-Math.PI/2,-Math.PI/2+p*Math.PI*2,false); gx.stroke();
-  }
-  return G.gesture.victory ? 'hold it… ✌️ starting' : (hl? '✌️ make a peace sign' : '✋ show your hand to the camera');
-}
-
-/* --------------------------------- game ---------------------------------- */
-function triggerJump(){
-  G.jump.active=true; G.jump.t=0; G.jumpCooldown=0.4;
-  $('jumpChip').classList.add('fire'); setTimeout(()=>$('jumpChip').classList.remove('fire'),260);
-  const f=playerFoot(); spawnDust(f.x,f.y);
-  Sound.jump();
-}
-function triggerDuck(){
-  G.duck.active=true; G.duck.t=0; G.duckCooldown=0.4;
-  $('duckChip').classList.add('fire'); setTimeout(()=>$('duckChip').classList.remove('fire'),260);
-  const f=playerFoot(); spawnDust(f.x,f.y);
-  Sound.duck();
-}
-function triggerPunch(){
-  G.punch.active=true; G.punch.t=0; G.punchCooldown=0.3;
-  $('punchChip').classList.add('fire'); setTimeout(()=>$('punchChip').classList.remove('fire'),220);
-  Sound.punch();
-}
-// discrete lane change for keyboard/touch (webcam sets G.lane from body position instead)
-function doLane(dir){
-  const nl=clamp(G.lane+dir,0,2);
-  if(nl!==G.lane){ G.lane=nl; Sound.lane(); updateLaneDots(); const f=playerFoot(); spawnDust(f.x,f.y); }
-}
-function pushObs(lane,type,coin){ G.obstacles.push({lane, z:ZFAR, type, passed:false, coin:!!coin, dead:false, seed:Math.random()}); }
-function weightedType(w){ let r=Math.random(), acc=0; for(const k in w){ acc+=w[k]; if(r<acc) return k; } return Object.keys(w)[0]; }
-function pickFiller(){ return weightedType({block:0.6, barrier:0.2, overhead:0.2}); }
-// CORRIDOR SPAWNER — every step is exactly ONE of:
-//  ACTION: one clearable obstacle in the planned (safe) lane — jump / duck / punch it.
-//  DODGE : the planned lane moves to an ADJACENT empty lane; the other two get fillers.
-//  FREE  : a breather (optional decoration off the planned lane).
-// This guarantees a continuous survivable path, one required input per depth, >=1 open
-// lane, no 2-lane dodges and no "requires two actions at once".
-function doSpawn(d){
-  if(G.firstSpawn){                                  // gentle intro
-    G.firstSpawn=false;
-    if(Math.random()<0.5){ pushObs(G.plannedLane,'barrier',false); G.lastStepWasAction=true; }
-    else G.lastStepWasAction=false;
-    return;
-  }
-  const pFree=Math.max(0, 1-d.pAction-d.pDodge), r=Math.random();
-  if(r<pFree){                                       // ---- FREE / breather ----
-    const opts=[0,1,2].filter(L=>L!==G.plannedLane);
-    if(Math.random()<0.5) pushObs(opts[(Math.random()*opts.length)|0], pickFiller(), false);
-    G.lastStepWasAction=false;
-  } else if(r<pFree+d.pAction){                       // ---- ACTION step ----
-    const type=weightedType({barrier:0.40, overhead:0.38, breakable:0.22});
-    const coin=(type==='barrier'||type==='overhead') && Math.random()<0.4;  // coin only where you clear it
-    pushObs(G.plannedLane, type, coin);
-    G.lastStepWasAction=true;
-  } else {                                            // ---- DODGE step ----
-    const cands=[G.plannedLane-1,G.plannedLane+1].filter(L=>L>=0&&L<=2);
-    const E=cands[(Math.random()*cands.length)|0];    // guaranteed-open adjacent target
-    for(const L of [0,1,2]) if(L!==E) pushObs(L, pickFiller(), false);
-    G.plannedLane=E;
-    G.lastStepWasAction=false;
-  }
-}
-// keyboard / touch: no camera, no calibration — straight into a run (tutorial is offered
-// separately via "How to play"). Sets the control scheme so the engine reads the right input.
-function startWithScheme(scheme){ Sound.on(); G.control=scheme; startGame(false); }
-// ready lobby: camera on, watching for the ✌️ start gesture (or the Start button)
-function enterReady(){
-  G.screen='ready'; G.gesture.hold=0; G.gesture.victory=false; G.handLm=null;
-  show('startScreen',false); show('overScreen',false);
-  show('hud',false); show('feedback',false);
-  show('readyBar',true); show('topbtns',true);
-  resize();
-}
-// First-time flow: a short GUIDED calibration. You stand still (lock neutral), then
-// the game asks you to JUMP, STEP to a side, and DUCK in turn — showing your character
-// do each one. It measures how far YOU move so the in-game triggers match your body.
-function enterCalibration(){
-  G.screen='calib';
-  G.calib={idx:0, steps:['still','jump','lane','duck','ready'], t:0, confirm:0, doneFlash:0,
-           n:0, sx:0, sy:0, st:0, sw:0, jumpRise:0, duckDrop:0, laneReach:0, done:false};
-  G.body.jumpTh=null; G.body.duckTh=null;
-  G.jump.active=false; G.jump.t=0; G.duck.active=false; G.duck.t=0; G.lane=1; G.laneX=0; G.particles.length=0;
-  show('startScreen',false); show('overScreen',false); show('readyBar',false);
-  show('hud',false); show('feedback',false); show('topbtns',true);
-  resize();
-}
-function advanceCalib(){ const c=G.calib; c.idx++; c.t=0; c.confirm=0; G.lane=1; }
-// Runs each frame while calibrating: animates the demo action, detects when you've
-// performed the current step, then moves on. Timeouts keep nobody stuck.
-function stepCalibration(dt){
-  const c=G.calib, stp=c.steps[c.idx];
-  c.t+=dt; if(c.doneFlash>0) c.doneFlash=Math.max(0,c.doneFlash-dt);
-  // animate the character's demo (timers don't tick in update() outside 'play')
-  if(G.jump.active){ G.jump.t+=dt; if(G.jump.t>=G.jump.dur){G.jump.active=false;G.jump.t=0;} }
-  if(G.duck.active){ G.duck.t+=dt; if(G.duck.t>=G.duck.dur){G.duck.active=false;G.duck.t=0;} }
-  G.laneX = lerp(G.laneX, (G.lane-1), clamp(dt*12,0,1));
-  if(G.particles.length){ for(const p of G.particles){ p.age+=dt; p.x+=p.vx*dt; p.y+=p.vy*dt; p.vy+=(p.g==null?520:p.g)*dt; if(p.vr)p.rot=(p.rot||0)+p.vr*dt; } G.particles=G.particles.filter(p=>p.age<p.life); }
-
-  if(stp==='ready'){ if(c.t>0.9) finishCalibration(); return; }
-  if(c.confirm>0){ c.confirm-=dt; if(c.confirm<=0) advanceCalib(); return; }  // show the move, then advance
-  if(!G.body.seen) return;                                                    // wait until we can see you
-
-  const torso=G.body.torso||0.22, need=Math.max(0.05, jumpThreshold(torso));
-  if(stp==='still'){
-    if(c.t>=0.9 && c.n>4){ G.body.baseX=c.sx/c.n; G.body.baseY=c.sy/c.n; G.body.torso=c.st/c.n; c.doneFlash=0.5; advanceCalib(); }
-    else if(c.t>3.5 && c.n>0){ G.body.baseX=c.sx/c.n; G.body.baseY=c.sy/c.n; G.body.torso=c.st/c.n; advanceCalib(); }
-    return;
-  }
-  let hit=false;
-  if(stp==='jump' && c.jumpRise>need){ if(!G.jump.active) triggerJump(); hit=true; }
-  else if(stp==='duck' && c.duckDrop>need){ if(!G.duck.active) triggerDuck(); hit=true; }
-  else if(stp==='lane' && c.laneReach>Math.max(0.06,need)){ G.lane=(G.body.x>G.body.baseX)?2:0; hit=true; }
-  if(hit){ c.confirm=0.7; c.doneFlash=0.7; return; }
-  if(c.t>8) advanceCalib();     // couldn't detect it in time -> skip with defaults
-}
-function finishCalibration(){
-  const c=G.calib;
-  if(c.n>0){ G.body.baseX=c.sx/c.n; G.body.baseY=c.sy/c.n; G.body.torso=c.st/c.n; }
-  // Personalise ONLY as a small nudge around the proven size-based defaults, so
-  // calibration can never break the feel:
-  //  - lane step stays within ±20% of the tuned default (always responsive, never a huge reach)
-  //  - jump/duck thresholds are FLOORED at the tuned default, so they can only get LESS
-  //    sensitive (prevents the false ducks that a too-small measured threshold caused)
-  const torso=G.body.torso||0.22;
-  const sw = c.n>0 ? c.sw/c.n : 0.12;
-  const stepDef=laneStep(sw), thDef=jumpThreshold(torso);
-  G.body.step   = (c.laneReach>0.05) ? clamp(c.laneReach*0.40, stepDef*0.65, stepDef*1.1) : stepDef;
-  G.body.jumpTh = (c.jumpRise >0.05) ? clamp(c.jumpRise *0.5,  thDef,       thDef*1.5)   : null;
-  G.body.duckTh = (c.duckDrop >0.05) ? clamp(c.duckDrop *0.5,  thDef,       thDef*1.5)   : null;
-  c.done=true;
-  startGame(true);   // keep the freshly-measured neutral + gently-tuned thresholds
-}
-function startGame(keepNeutral){
-  Sound.start();
-  clearTimeout(G._overTimer);                // cancel any pending game-over reveal
-  const d=DIFF[G.diffKey];
-  G.obstacles.length=0; G.dist=0; G.score=0; G.boost=0; G.boostHeld=false;
-  G.spawnTimer=2.0;                          // grace start: ~2s before the first obstacle
-  G.plannedLane=1; G.lastStepWasAction=false; G.firstSpawn=true;
-  G.lane=1; G.laneX=0; G.jump.active=false; G.jump.t=0; G.jumpCooldown=0;
-  G.duck.active=false; G.duck.t=0; G.duckCooldown=0;
-  G.punch.active=false; G.punch.t=0; G.punchCooldown=0; G.particles.length=0;
-  if(!keepNeutral) G.body.baseX=G.body.x;  // lock in your current stance as the neutral centre
-  G.baseSpeed=d.baseSpeed; G.speed=d.baseSpeed;
-  G.gesture.hold=0; G.gesture.victory=false; G.gesture.tHold=0; G.gesture.tpose=false;
-  G.running=true; G.screen='play';
-  updateLaneDots();
-  show('startScreen',false); show('overScreen',false); show('readyBar',false);
-  show('hud',true); show('feedback',true); show('topbtns',true);
-  show('boostPad', G.control==='touch');                       // hold-to-boost pad on touch
-  $('camBtn').style.display = G.control==='webcam' ? '' : 'none';
-  resize();
-}
-function gameOver(){
-  if(G.screen!=='play') return;
-  G.running=false; G.screen='over';
-  G.gesture.tpose=false; G.gesture.tHold=0;   // fresh T-pose restart watch
-  G.flash=1; G.shake=16;
-  if(navigator.vibrate) try{navigator.vibrate([120,60,120]);}catch(e){}
-  Sound.crash();
-  const sc=Math.floor(G.score), isBest=sc>G.best;
-  if(isBest){ G.best=sc; try{localStorage.setItem('bodydash_best',String(sc));}catch(e){} }
-  G._submitted=false; G._lastRun={score:sc, dist:Math.floor(G.dist), diff:G.diffKey};
-  clearTimeout(G._overTimer);
-  G._overTimer=setTimeout(()=>{
-    if(G.screen!=='over') return;   // a fast restart already began a new run — don't clobber it
-    show('hud',false); show('feedback',false); show('boostPad',false);
-    $('overScore').textContent=sc;
-    $('overDist').textContent=Math.floor(G.dist)+'m';
-    $('overBest').textContent=G.best;
-    show('newBest', isBest);
-    // optional name entry -> leaderboard (never blocks Run Again / Home)
-    $('nameInput').value=LB.getName()||'';
-    $('submitMsg').textContent=''; $('submitMsg').className='lbsub';
-    $('submitScore').disabled=false; $('submitScore').textContent='Submit';
-    show('nameEntry', true);
-    $('restartHint').style.display = (G.control==='webcam') ? '' : 'none';  // T-pose hint webcam-only
-    show('overScreen',true);
-  },560);
-}
-
-function update(dt){
-  if(G.screen!=='play'||!G.running) return;
-  const d=DIFF[G.diffKey];
-  // boost target: running-in-place (webcam) OR a held key/pad (keyboard/touch)
-  const boostTarget = (G.control==='webcam') ? G.body.runLevel : (G.boostHeld?1:0);
-  G.boost = lerp(G.boost, boostTarget, 0.08);
-  // speed ramps to a HARD cap; boost adds at most 25%, total clamped to Vcap (fairness)
-  G.baseSpeed = Math.min(d.speedCap, G.baseSpeed + d.ramp*dt);
-  G.speed = Math.min(G.baseSpeed*(1 + 0.25*G.boost), d.Vcap);
-  G.dist += G.speed*dt;
-  G.score += G.speed*dt*(1+0.5*G.boost); // distance + boost bonus
-  // slide the visual lane offset toward the target (snappier for crisp lane feel)
-  const targetOff=(G.lane-1);
-  G.laneX = lerp(G.laneX, targetOff, clamp(dt*16,0,1));
-  // jump arc / duck slide timers
-  if(G.jump.active){ G.jump.t+=dt; if(G.jump.t>=G.jump.dur){ G.jump.active=false; G.jump.t=0; } }
-  if(G.duck.active){ G.duck.t+=dt; if(G.duck.t>=G.duck.dur){ G.duck.active=false; G.duck.t=0; } }
-  if(G.punch.active){ G.punch.t+=dt; if(G.punch.t>=G.punch.dur){ G.punch.active=false; G.punch.t=0; } }
-  if(G.jumpCooldown>0) G.jumpCooldown-=dt;
-  if(G.duckCooldown>0) G.duckCooldown-=dt;
-  if(G.punchCooldown>0) G.punchCooldown-=dt;
-  // SPAWN gate: both a time interval AND a spatial separation must pass, so a mid-run
-  // speed-up can never let obstacles bunch up below the fair minimum gap.
-  G.spawnTimer-=dt;
-  let frontZ=-Infinity; for(const o of G.obstacles) if(o.z>frontZ) frontZ=o.z; // nearest to the spawn point (largest z)
-  const minSep=G.speed*d.minGap;
-  if(G.spawnTimer<=0 && (G.obstacles.length===0 || (ZFAR-frontZ)>=minSep)){
-    doSpawn(d);
-    let interval=Math.max(d.spawnFloor, d.spawnBase - G.dist*0.0006);
-    if(G.lastStepWasAction) interval+=0.25;   // settle after a jump/duck
-    G.spawnTimer=interval;
-  }
-  for(const o of G.obstacles){
-    o.z -= G.speed*dt;
-    if(!o.passed && o.z<=ZHIT){
-      o.passed=true;
-      resolveCollision(o);
-    }
-  }
-  G.obstacles=G.obstacles.filter(o=>o.z>-2 && !o.dead);
-  // particles (crate shards, sparks, dust)
-  if(G.particles.length){
-    for(const p of G.particles){ p.age+=dt; p.x+=p.vx*dt; p.y+=p.vy*dt; p.vy+=(p.g==null?520:p.g)*dt; if(p.vr) p.rot=(p.rot||0)+p.vr*dt; }
-    G.particles=G.particles.filter(p=>p.age<p.life);
-  }
-  // fx decay
-  if(G.shake>0) G.shake=Math.max(0,G.shake-dt*30);
-  if(G.flash>0) G.flash=Math.max(0,G.flash-dt*1.6);
-}
-function jumpHeight(){ if(!G.jump.active) return 0; return Math.sin((G.jump.t/G.jump.dur)*Math.PI); } // 0..1 arc
-function duckAmount(){ if(!G.duck.active) return 0; return Math.sin((G.duck.t/G.duck.dur)*Math.PI); }   // 0..1 slide
-function isDucking(){ return duckAmount()>0.28; }
-function isPunching(){ return G.punch.active; }
-function resolveCollision(o){
-  if(o.lane!==G.lane) return;                     // different lane -> safe
-  if(o.type==='barrier'){                          // low: JUMP over it
-    if(jumpHeight()>0.28){ if(o.coin) collectCoin(o); return; }
-    return gameOver();
-  } else if(o.type==='overhead'){                  // high bar: DUCK/SLIDE under it
-    if(isDucking()){ if(o.coin) collectCoin(o); return; }
-    return gameOver();
-  } else if(o.type==='breakable'){                 // crate: PUNCH to smash it (or dodge)
-    if(isPunching()){ smashCrate(o); return; }
-    return gameOver();
-  } else {                                         // block: can't jump/duck -> must dodge
-    return gameOver();
-  }
-}
-function collectCoin(o){ G.score+=25; o.coin=false; Sound.coin(); }
-function smashCrate(o){
-  o.dead=true; G.score+=40; Sound.smash();
-  const pf=pfOf(o.z), x=laneCenterX(o.lane,pf), y=screenYOf(pf)-lerp(10,H*0.12,pf);
-  spawnBreak(x,y,pf);
-  G.shake=Math.max(G.shake,7); G.flash=Math.max(G.flash,0.22);   // punchy impact
-}
-// wooden crate explosion: tumbling chunks + bright sparks
-function spawnBreak(x,y,pf){
-  if(REDUCED) return;
-  const sc=lerp(0.55,1.4,pf);
-  for(let i=0;i<14;i++){
-    const a=(i/14)*Math.PI*2 + Math.random()*0.6, sp=(90+Math.random()*240)*sc;
-    G.particles.push({ kind:'chunk', x, y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp-140,
-      life:0.55+Math.random()*0.4, age:0, s:(4+Math.random()*6)*sc,
-      rot:Math.random()*6.28, vr:(Math.random()-0.5)*14,
-      c: Math.random()<0.5?'#e08a3c':'#b5661f' });
-  }
-  for(let i=0;i<8;i++){
-    const a=Math.random()*Math.PI*2, sp=(160+Math.random()*260)*sc;
-    G.particles.push({ kind:'spark', x, y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp-110,
-      life:0.3+Math.random()*0.2, age:0, s:(2+Math.random()*2)*sc, g:260, c:'#fff2a8' });
-  }
-  if(G.particles.length>300) G.particles.splice(0, G.particles.length-300);
-}
-// little dust kick under the feet on a jump / slide
-function spawnDust(x,y){
-  if(REDUCED) return;
-  for(let i=0;i<7;i++){
-    const a=-Math.PI/2 + (Math.random()-0.5)*2.4, sp=60+Math.random()*130;
-    G.particles.push({ kind:'chunk', x:x+(Math.random()-0.5)*20, y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp*0.5,
-      life:0.3+Math.random()*0.2, age:0, s:3+Math.random()*4, g:200,
-      rot:Math.random()*6.28, vr:(Math.random()-0.5)*8, c:'rgba(190,200,225,0.85)' });
-  }
-}
-// where the runner's feet meet the road (for dust spawns)
-function playerFoot(){ const bx=laneCenterX(1,1)+G.laneX*halfRoad(1)*0.62; return {x:bx, y:groundY()+4}; }
-
-/* ------------------------------- rendering ------------------------------- */
-function drawGame(){
-  gx.setTransform(DPR,0,0,DPR,0,0);
-  const t=performance.now()/1000;
-  if(G.shake>0&&!REDUCED){ gx.translate((Math.random()-0.5)*G.shake,(Math.random()-0.5)*G.shake); }
-  drawBackground(t);
-  drawRoad(t);
-  if(G.screen==='intro'){ drawIntro(t);
-    if(G.flash>0){ gx.fillStyle='rgba(255,255,255,'+(0.5*G.flash)+')'; gx.fillRect(0,0,W,H); }
-    gx.setTransform(DPR,0,0,DPR,0,0); return; }
-  // obstacles far->near
-  const list=[...G.obstacles].sort((a,b)=>b.z-a.z);
-  for(const o of list) drawObstacle(o,t);
-  if(G.rings.length) drawRings();
-  drawPlayer(t);
-  if(G.particles.length) drawParticles();
-  if(G.screen==='calib') drawCalibrationOverlay();
-  // camera panel (webcam scheme only): lobby, calibration + active session
-  if(G.control==='webcam' && (G.screen==='ready'||G.screen==='calib'||G.screen==='play'||G.screen==='over')) drawCamPanel();
-  // flash
-  if(G.flash>0){ gx.fillStyle='rgba(255,80,120,'+(0.45*G.flash)+')'; gx.fillRect(0,0,W,H); }
-  gx.setTransform(DPR,0,0,DPR,0,0);
-}
-// synthwave sky: gradient, twinkling stars, a retro sun, layered mountains
-function drawBackground(t){
-  const hy=horizonY();
-  const sky=gx.createLinearGradient(0,0,0,hy);
-  sky.addColorStop(0,'#080622'); sky.addColorStop(0.55,'#241452'); sky.addColorStop(1,'#5a2a7e');
-  gx.fillStyle=sky; gx.fillRect(-20,-20,W+40,hy+20);
-  // stars
-  for(const s of G.stars){
-    const tw=0.35+0.65*(0.5+0.5*Math.sin(t*2+s.ph));
-    gx.globalAlpha=tw; gx.fillStyle='#dfe8ff'; gx.fillRect(s.x*W, s.y*hy, s.r, s.r);
-  }
-  gx.globalAlpha=1;
-  // sun: glow + disc with retro scanlines
-  const sunY=hy-Math.min(W,H)*0.015, sunR=Math.min(W,H)*0.15;
-  const glow=gx.createRadialGradient(W*0.5,sunY,sunR*0.2,W*0.5,sunY,sunR*2.4);
-  glow.addColorStop(0,'rgba(255,190,120,0.85)'); glow.addColorStop(0.45,'rgba(255,110,110,0.4)'); glow.addColorStop(1,'rgba(255,90,140,0)');
-  gx.fillStyle=glow; gx.beginPath(); gx.arc(W*0.5,sunY,sunR*2.4,0,7); gx.fill();
-  gx.save(); gx.beginPath(); gx.arc(W*0.5,sunY,sunR,0,7); gx.clip();
-  const sg=gx.createLinearGradient(0,sunY-sunR,0,sunY+sunR);
-  sg.addColorStop(0,'#ffe27a'); sg.addColorStop(1,'#ff5da2');
-  gx.fillStyle=sg; gx.fillRect(W*0.5-sunR,sunY-sunR,sunR*2,sunR*2);
-  gx.fillStyle='rgba(20,10,40,0.5)';
-  for(let i=1;i<=6;i++){ const yy=sunY+ (i/7)*sunR; gx.fillRect(W*0.5-sunR, yy, sunR*2, Math.max(1.5,sunR*0.05)*(0.4+i*0.14)); }
-  gx.restore();
-  // mountains (two parallax layers)
-  drawMountains(G.mtns, hy, Math.min(W,H)*0.16, '#1a1038');
-  drawMountains(G.mtns2, hy, Math.min(W,H)*0.10, '#120b2a');
-  // ground base + horizon glow
-  gx.fillStyle='#0a0e28'; gx.fillRect(-20,hy,W+40,H-hy+20);
-  gx.save(); gx.shadowColor='rgba(94,224,255,0.9)'; gx.shadowBlur=10;
-  gx.strokeStyle='rgba(94,224,255,0.7)'; gx.lineWidth=2; gx.beginPath(); gx.moveTo(0,hy); gx.lineTo(W,hy); gx.stroke(); gx.restore();
-}
-function drawMountains(arr, baseY, amp, color){
-  if(!arr.length) return;
-  gx.fillStyle=color; gx.beginPath(); gx.moveTo(-20,baseY);
-  const n=arr.length;
-  for(let i=0;i<=n;i++){ const x=(i/n)*(W+40)-20; gx.lineTo(x, baseY-arr[i%n]*amp); }
-  gx.lineTo(W+20,baseY); gx.closePath(); gx.fill();
-}
-function drawRoad(t){
-  const hy=horizonY(), gyv=groundY();
-  const nH=halfRoad(1), fH=halfRoad(0);
-  // road surface
-  const rg=gx.createLinearGradient(0,hy,0,gyv);
-  rg.addColorStop(0,'#15173a'); rg.addColorStop(1,'#241a4e');
-  gx.fillStyle=rg;
-  gx.beginPath(); gx.moveTo(W*0.5-fH,hy); gx.lineTo(W*0.5+fH,hy);
-  gx.lineTo(W*0.5+nH,gyv); gx.lineTo(W*0.5-nH,gyv); gx.closePath(); gx.fill();
-  const phase=(G.dist*0.6)%1;
-  // horizontal grid lines rushing toward you (synthwave floor)
-  gx.strokeStyle='rgba(124,92,255,0.28)';
-  for(let seg=0;seg<20;seg++){
-    const z=(seg+phase)*1.4; if(z>ZFAR) continue;
-    const pf=pfOf(z), yy=screenYOf(pf), hw=halfRoad(pf);
-    gx.lineWidth=Math.max(0.5,lerp(0.5,2.5,pf));
-    gx.beginPath(); gx.moveTo(W*0.5-hw,yy); gx.lineTo(W*0.5+hw,yy); gx.stroke();
-  }
-  // glowing neon edges
-  gx.save(); gx.shadowColor='rgba(94,224,255,0.9)'; gx.shadowBlur=12;
-  gx.strokeStyle='#5ee0ff'; gx.lineWidth=4;
-  gx.beginPath(); gx.moveTo(W*0.5-fH,hy); gx.lineTo(W*0.5-nH,gyv); gx.moveTo(W*0.5+fH,hy); gx.lineTo(W*0.5+nH,gyv); gx.stroke();
-  gx.restore();
-  // lane dividers with moving dashes
-  for(let d=-1;d<=1;d+=2){
-    for(let seg=0;seg<16;seg++){
-      const z0=(seg+phase)*1.6, z1=z0+0.7; if(z0>ZFAR) continue;
-      const pf0=pfOf(z0), pf1=pfOf(z1);
-      const x0=W*0.5 + d*halfRoad(pf0)*0.31, x1=W*0.5 + d*halfRoad(pf1)*0.31;
-      gx.strokeStyle='rgba(255,255,255,'+lerp(0.12,0.6,pf0).toFixed(3)+')'; gx.lineWidth=lerp(1,5,pf0);
-      gx.beginPath(); gx.moveTo(x0,screenYOf(pf0)); gx.lineTo(x1,screenYOf(pf1)); gx.stroke();
-    }
-  }
-  // side speed-posts whooshing past for a sense of velocity
-  const pph=(G.dist*0.9)%1;
-  for(let d=-1;d<=1;d+=2){
-    for(let seg=0;seg<10;seg++){
-      const z=(seg+pph)*2.2; if(z>ZFAR||z<0.25) continue;
-      const pf=pfOf(z), yy=screenYOf(pf), hw=halfRoad(pf), ph=lerp(4,H*0.14,pf);
-      gx.fillStyle='rgba(94,224,255,'+lerp(0.08,0.5,pf).toFixed(3)+')';
-      gx.fillRect(W*0.5 + d*hw*1.06 - Math.max(1,3*pf), yy-ph, Math.max(2,6*pf), ph);
-    }
-  }
-}
-function drawObstacle(o,t){
-  const pf=pfOf(o.z); if(pf<=0.02) return;
-  const x=laneCenterX(o.lane,pf), y=screenYOf(pf);
-  const w=lerp(10,W*0.2,pf);
-  const rr=Math.min(10,w*0.2);
-  const seed=(o.seed||0), lw=n=>Math.max(1,n*pf);
-  gx.save();
-  // contact shadow
-  gx.fillStyle='rgba(0,0,0,0.4)'; gx.beginPath(); gx.ellipse(x,y,w*0.62,w*0.18,0,0,7); gx.fill();
-  if(o.type==='block'){                       // TALL neon wall — DODGE to another lane
-    const h=lerp(20,H*0.34,pf), pulse=0.5+0.5*Math.sin(t*4+seed*6.28);
-    gx.save(); gx.shadowColor='rgba(255,93,162,'+(0.45+0.4*pulse).toFixed(3)+')'; gx.shadowBlur=lerp(4,22,pf);
-    const bg=gx.createLinearGradient(x,y-h,x,y); bg.addColorStop(0,'#ff7ab5'); bg.addColorStop(1,'#bd2e6c');
-    gx.fillStyle=bg; roundRect(x-w/2,y-h,w,h,rr); gx.fill(); gx.restore();
-    // warning chevrons pointing sideways ("go around")
-    gx.strokeStyle='rgba(12,6,20,0.6)'; gx.lineWidth=lw(3); gx.lineCap='round';
-    for(let i=0;i<3;i++){ const yy=y-h+h*(0.24+i*0.26); gx.beginPath();
-      gx.moveTo(x-w*0.26,yy-h*0.06); gx.lineTo(x+w*0.02,yy); gx.lineTo(x-w*0.26,yy+h*0.06); gx.stroke(); }
-    gx.lineCap='butt';
-    gx.fillStyle='rgba(255,255,255,0.3)'; gx.fillRect(x-w/2,y-h,w,h*0.1);
-    gx.strokeStyle='#8e1f52'; gx.lineWidth=lw(2); roundRect(x-w/2,y-h,w,h,rr); gx.stroke();
-  } else if(o.type==='overhead'){             // HIGH neon bar — DUCK / slide under
-    const clr=lerp(16,H*0.16,pf), bh=lerp(9,H*0.10,pf), bw=w*1.14, top=y-clr-bh;
-    const post=Math.max(2,4*pf);
-    gx.fillStyle='#4a2f96'; gx.fillRect(x-bw/2,top,post,clr+bh); gx.fillRect(x+bw/2-post,top,post,clr+bh);
-    gx.save(); gx.shadowColor='rgba(160,107,255,0.8)'; gx.shadowBlur=lerp(3,16,pf);
-    const bg=gx.createLinearGradient(x,top,x,top+bh); bg.addColorStop(0,'#c49bff'); bg.addColorStop(1,'#7a52d8');
-    gx.fillStyle=bg; roundRect(x-bw/2,top,bw,bh,rr*0.6); gx.fill(); gx.restore();
-    // moving hazard stripes clipped to the bar
-    gx.save(); roundRect(x-bw/2,top,bw,bh,rr*0.6); gx.clip(); gx.fillStyle='rgba(20,10,40,0.5)';
-    const so=(t*40)%(bw*0.2);
-    for(let s=-3;s<=5;s++){ const sx=x-bw/2+s*bw*0.2+so; gx.beginPath();
-      gx.moveTo(sx,top); gx.lineTo(sx+bw*0.1,top); gx.lineTo(sx+bw*0.1-bh,top+bh); gx.lineTo(sx-bh,top+bh); gx.closePath(); gx.fill(); }
-    gx.restore();
-    // bouncing "slide under" arrow in the gap
-    const ay=y-clr*0.45 + Math.sin(t*5+seed*6.28)*clr*0.08;
-    gx.strokeStyle='rgba(210,180,255,0.95)'; gx.lineWidth=lw(2.4); gx.lineCap='round';
-    gx.beginPath(); gx.moveTo(x-w*0.16,ay-clr*0.12); gx.lineTo(x,ay+clr*0.14); gx.lineTo(x+w*0.16,ay-clr*0.12); gx.stroke(); gx.lineCap='butt';
-  } else if(o.type==='breakable'){            // wooden CRATE — PUNCH to smash it
-    const bob=Math.sin(t*3+seed*6.28)*lerp(0,4,pf);
-    const h=lerp(16,H*0.2,pf), bx=x-w/2, by=y-h+bob;
-    const wg=gx.createLinearGradient(bx,by,bx,by+h); wg.addColorStop(0,'#f0a35b'); wg.addColorStop(1,'#c9772e');
-    gx.fillStyle=wg; roundRect(bx,by,w,h,rr); gx.fill();
-    gx.strokeStyle='rgba(120,66,26,0.85)'; gx.lineWidth=lw(1.4);
-    gx.beginPath(); gx.moveTo(bx,by+h*0.5); gx.lineTo(bx+w,by+h*0.5); gx.stroke();
-    // metal corner brackets
-    gx.fillStyle='#9aa0af'; const cb=Math.max(2,w*0.15);
-    [[bx,by],[bx+w-cb,by],[bx,by+h-cb],[bx+w-cb,by+h-cb]].forEach(q=>gx.fillRect(q[0],q[1],cb,cb));
-    // crack
-    gx.strokeStyle='rgba(60,30,10,0.85)'; gx.lineWidth=lw(2);
-    gx.beginPath(); gx.moveTo(x-w*0.16,by+h*0.18); gx.lineTo(x+w*0.05,by+h*0.5); gx.lineTo(x-w*0.1,by+h*0.82); gx.stroke();
-    gx.strokeStyle='#7a3d12'; gx.lineWidth=lw(2); roundRect(bx,by,w,h,rr); gx.stroke();
-    // pulsing punch target
-    if(pf>0.18){ const pr=lerp(4,15,pf)*(0.9+0.15*Math.sin(t*6+seed*6.28));
-      gx.strokeStyle='rgba(255,255,255,0.85)'; gx.lineWidth=lw(2);
-      gx.beginPath(); gx.arc(x,by+h*0.5,pr,0,7); gx.stroke();
-      gx.font='700 '+Math.round(lerp(9,22,pf))+'px Trebuchet MS'; gx.textAlign='center'; gx.textBaseline='middle';
-      gx.fillStyle='#fff'; gx.fillText('👊',x,by+h*0.5); gx.textBaseline='alphabetic'; }
-  } else {                                    // LOW barrier — JUMP over it
-    const h=lerp(10,H*0.11,pf);
-    gx.save(); gx.shadowColor='rgba(255,210,63,0.8)'; gx.shadowBlur=lerp(3,14,pf);
-    const bg=gx.createLinearGradient(x,y-h,x,y); bg.addColorStop(0,'#ffe27a'); bg.addColorStop(1,'#f0b81f');
-    gx.fillStyle=bg; roundRect(x-w/2,y-h,w,h,Math.min(8,w*0.2)); gx.fill(); gx.restore();
-    gx.fillStyle='#0c1022'; for(let s=-1;s<=1;s++){ gx.fillRect(x+s*w*0.28-w*0.05,y-h,w*0.1,h); }
-    // bouncing up-arrow hint
-    const ay=y-h-lerp(5,18,pf) + Math.sin(t*5+seed*6.28)*lerp(1,4,pf);
-    gx.strokeStyle='rgba(255,255,255,0.9)'; gx.lineWidth=lw(2.2); gx.lineCap='round';
-    gx.beginPath(); gx.moveTo(x-w*0.14,ay+w*0.12); gx.lineTo(x,ay); gx.lineTo(x+w*0.14,ay+w*0.12); gx.stroke(); gx.lineCap='butt';
-    gx.strokeStyle='#a6821a'; gx.lineWidth=lw(2); roundRect(x-w/2,y-h,w,h,Math.min(8,w*0.2)); gx.stroke();
-  }
-  // spinning coin
-  if(o.coin){
-    const cy = o.type==='overhead' ? y-lerp(8,26,pf) : y-lerp(16,H*0.11,pf)-lerp(6,26,pf);
-    const cr=lerp(3,12,pf), spin=Math.abs(Math.cos(t*4+seed*6.28));
-    gx.save(); gx.shadowColor='rgba(255,226,122,0.9)'; gx.shadowBlur=lerp(2,10,pf);
-    gx.fillStyle='#ffe27a'; gx.beginPath(); gx.ellipse(x,cy,Math.max(1,cr*spin),cr,0,0,7); gx.fill();
-    gx.strokeStyle='#c9a227'; gx.lineWidth=lw(1.5); gx.stroke(); gx.restore();
-  }
-  gx.restore();
-}
-// Two-bone limb with inverse kinematics: bends the knee/elbow toward `bend`, tapers
-// from w1->w2, rounded joints. Returns the (possibly clamped) end point.
-function drawLimb(ax,ay,bx,by,l1,l2,bend,w1,w2,color){
-  let dx=bx-ax, dy=by-ay, dist=Math.hypot(dx,dy)||1e-4;
-  const reach=l1+l2-1e-3;
-  if(dist>reach){ const k=reach/dist; bx=ax+dx*k; by=ay+dy*k; dx=bx-ax; dy=by-ay; dist=reach; }
-  const ang=Math.atan2(dy,dx);
-  const cosA=clamp((dist*dist+l1*l1-l2*l2)/(2*dist*l1),-1,1);
-  const jx=ax+Math.cos(ang+bend*Math.acos(cosA))*l1;
-  const jy=ay+Math.sin(ang+bend*Math.acos(cosA))*l1;
-  gx.lineCap='round'; gx.strokeStyle=color;
-  gx.lineWidth=w1; gx.beginPath(); gx.moveTo(ax,ay); gx.lineTo(jx,jy); gx.stroke();
-  gx.lineWidth=w2; gx.beginPath(); gx.moveTo(jx,jy); gx.lineTo(bx,by); gx.stroke();
-  return [bx,by];
-}
-function drawFoot(x,y,ang,s,color){ gx.save(); gx.translate(x,y); gx.rotate(ang); gx.fillStyle=color; roundRect(-s*0.05,-s*0.06,s*0.36,s*0.15,s*0.06); gx.fill(); gx.restore(); }
-function drawFist(x,y,r,skin,cuff){ gx.fillStyle=cuff; gx.beginPath(); gx.arc(x,y,r*1.18,0,7); gx.fill(); gx.fillStyle=skin; gx.beginPath(); gx.arc(x,y,r,0,7); gx.fill(); }
-// A proper articulated runner: jointed legs & arms (IK), a run cycle, and distinct
-// jump / slide / punch poses — all original vector art, no external sprite.
-function drawPlayer(t){
-  const baseX=laneCenterX(1,1)+G.laneX*halfRoad(1)*0.62;
-  const jh=jumpHeight(), da=duckAmount();
-  const pAmt = G.punch.active ? Math.sin(clamp(G.punch.t/G.punch.dur,0,1)*Math.PI) : 0;
-  const boosting=G.body.runLevel>0.4;
-  const s=Math.min(W,H)*0.066;
-  const skin='#ffcfa8', dark='#241a3a';
-  const suit =boosting?'#37e39a':'#8a6bff', suitD=boosting?'#1fb87c':'#5e3fd6';
-  const band =boosting?'#eafff5':'#ff5da2';
-  const cad=6.5+G.speed*0.32, phase=t*cad, air=G.jump.active;
-  const jumpLift=jh*H*0.20, crouch=da, lean=crouch*0.6 + pAmt*0.18;
-  const bob=air?0:Math.sin(phase*2)*s*0.05;
-
-  gx.save(); gx.translate(baseX, groundY());
-  // ground shadow (stays on the road; shrinks with height, spreads on a slide)
-  gx.fillStyle='rgba(0,0,0,0.30)';
-  gx.beginPath(); gx.ellipse(lean*s*0.6,-s*0.02, s*0.8*(1-jh*0.45)*(1+da*0.55), s*0.19*(1-jh*0.35),0,0,7); gx.fill();
-
-  // bank into lane changes + a landing squash/stretch spring, pivoting at the feet
-  gx.save(); gx.rotate(G.roll||0); gx.scale(1/Math.sqrt(G.squash||1), G.squash||1);
-
-  // skeleton anchors (y up = negative)
-  const hipX=lean*s*0.35, hipY=-s*1.05 - jumpLift + bob + crouch*s*0.5;
-  const shX =hipX + lean*s*0.55, shY=hipY - s*0.6 + crouch*s*0.14;
-  const headX=shX + lean*s*0.28, headY=shY - s*0.46 + crouch*s*0.04;
-
-  // boost afterimages
-  if(boosting&&!REDUCED){ gx.globalAlpha=0.16; for(let i=1;i<=3;i++){ gx.fillStyle=suit;
-    gx.beginPath(); gx.ellipse(hipX-i*s*0.34,(hipY+shY)/2, s*0.4, s*0.66,0,0,7); gx.fill(); } gx.globalAlpha=1; }
-
-  // ---- scarf: a flowing ribbon off the headband, drawn behind the body ----
-  if(G.scarf){ const sc=G.scarf; gx.lineCap='round';
-    for(let i=1;i<sc.length;i++){ const wq=lerp(s*0.17,s*0.03,(i-1)/(sc.length-1));
-      const ax=headX+sc[i-1].x*s, ay=headY-s*0.05+sc[i-1].y*s, bx=headX+sc[i].x*s, by=headY-s*0.05+sc[i].y*s;
-      gx.strokeStyle=band; gx.lineWidth=wq; gx.beginPath(); gx.moveTo(ax,ay); gx.lineTo(bx,by); gx.stroke(); }
-    gx.lineCap='butt'; }
-
-  // ---- legs (feet targets from the run cycle; tuck when airborne) ----
-  const strideX=air?s*0.16:s*0.52, lift=air?0:s*0.5;
-  const footY=ph=> air ? -jumpLift*0.6 - s*0.3 : -Math.max(0,Math.sin(ph))*lift - crouch*jumpLift*0;
-  const footX=ph=> hipX + strideX*Math.sin(ph) + lean*s*0.8;
-  const L1=s*0.52, L2=s*0.5;
-  const pL=phase, pR=phase+Math.PI;
-  // back leg (right) first for depth
-  drawLimb(hipX-s*0.09,hipY, footX(pR),footY(pR), L1,L2,+1, s*0.24,s*0.17, suitD);
-  drawFoot(footX(pR),footY(pR), lean*0.5+0.1, s, dark);
-  // front leg (left)
-  drawLimb(hipX+s*0.09,hipY, footX(pL),footY(pL), L1,L2,+1, s*0.26,s*0.18, suit);
-  drawFoot(footX(pL),footY(pL), lean*0.5+0.1, s, dark);
-
-  // ---- back arm (behind torso; flung up on a leap) ----
-  const baH = air ? [shX - s*0.5, shY - s*0.34]
-                  : [shX - s*0.34 - strideX*0.6*Math.sin(pR), shY + s*0.42 - Math.max(0,Math.sin(pL))*s*0.12];
-  drawLimb(shX-s*0.05,shY, baH[0],baH[1], s*0.4,s*0.4,-1, s*0.19,s*0.14, suitD);
-  drawFist(baH[0],baH[1], s*0.15, skin, suitD);
-
-  // ---- torso (hip->shoulder) with a highlight seam + belt ----
-  gx.lineCap='round'; gx.strokeStyle=suit; gx.lineWidth=s*0.6;
-  gx.beginPath(); gx.moveTo(hipX,hipY); gx.lineTo(shX,shY); gx.stroke();
-  gx.strokeStyle=suitD; gx.lineWidth=s*0.18;
-  gx.beginPath(); gx.moveTo(hipX+lean*s*0.18,hipY-s*0.04); gx.lineTo(shX+lean*s*0.18,shY+s*0.04); gx.stroke();
-  gx.strokeStyle=band; gx.lineWidth=s*0.11;
-  gx.beginPath(); gx.moveTo(hipX-s*0.26,hipY-s*0.02); gx.lineTo(hipX+s*0.3,hipY-s*0.02); gx.stroke();
-
-  // ---- head ----
-  gx.save(); gx.translate(headX,headY); gx.rotate(lean*0.22);
-  gx.fillStyle=skin; gx.beginPath(); gx.arc(0,0,s*0.4,0,7); gx.fill();
-  gx.fillStyle=suitD; gx.beginPath(); gx.arc(0,-s*0.05,s*0.42,Math.PI*1.02,Math.PI*1.98); gx.fill(); // hair cap
-  gx.fillStyle=band; gx.fillRect(-s*0.42,-s*0.09,s*0.84,s*0.13);                                      // headband
-  gx.fillStyle=dark; gx.beginPath(); gx.arc(s*0.12,-s*0.01,s*0.065,0,7); gx.arc(s*0.28,-s*0.01,s*0.055,0,7); gx.fill(); // eyes
-  gx.fillStyle='#fff'; gx.beginPath(); gx.arc(s*0.10,-s*0.03,s*0.02,0,7); gx.arc(s*0.26,-s*0.03,s*0.018,0,7); gx.fill();  // eye shine
-  // mouth changes with what you're doing
-  if(pAmt>0.3){ gx.strokeStyle=dark; gx.lineWidth=s*0.045; gx.beginPath(); gx.moveTo(s*0.05,-s*0.13); gx.lineTo(s*0.33,-s*0.07); gx.stroke();  // brow
-    gx.fillStyle=dark; gx.fillRect(s*0.1,s*0.13,s*0.22,s*0.055); }                                     // gritted
-  else if(boosting||G.speed>7){ gx.fillStyle=dark; gx.beginPath(); gx.ellipse(s*0.2,s*0.15,s*0.075,s*0.05,0,0,7); gx.fill(); }  // open, determined
-  else { gx.strokeStyle=dark; gx.lineWidth=s*0.035; gx.lineCap='round'; gx.beginPath(); gx.moveTo(s*0.12,s*0.15); gx.lineTo(s*0.28,s*0.15); gx.stroke(); gx.lineCap='butt'; }  // neutral
-  gx.restore();
-
-  // ---- front arm: PUNCH thrust, else run swing ----
-  let fH;
-  if(pAmt>0.02){ fH=[shX + s*0.3 + pAmt*s*1.8, shY - s*0.02 - pAmt*s*0.04]; }
-  else if(air){ fH=[shX + s*0.5, shY - s*0.34]; }
-  else { fH=[shX + s*0.34 - strideX*0.6*Math.sin(pL), shY + s*0.42 - Math.max(0,Math.sin(pR))*s*0.12]; }
-  drawLimb(shX+s*0.05,shY, fH[0],fH[1], s*0.42,s*0.42,-1, s*0.22,s*0.16, suit);
-  drawFist(fH[0],fH[1], s*0.2, skin, suit);
-  if(pAmt>0.5) drawImpactStar(fH[0]+s*0.2, fH[1], s*(0.4+0.7*pAmt), pAmt);
-  gx.lineCap='butt';
-  gx.restore();   // end banking/squash transform
-  gx.restore();
-}
-function drawRings(){ gx.save(); gx.strokeStyle='#eaf6ff';
-  for(const r of G.rings){ const k=r.age/r.life, rr=lerp(8,72,k);
-    gx.globalAlpha=(1-k)*0.5; gx.lineWidth=3*(1-k);
-    gx.beginPath(); gx.ellipse(r.x,r.y,rr,rr*0.32,0,0,7); gx.stroke(); }
-  gx.globalAlpha=1; gx.restore();
-}
-function drawImpactStar(x,y,r,a){
-  gx.save(); gx.globalAlpha=clamp(a,0,1); gx.translate(x,y);
-  gx.fillStyle='#fff2a8'; gx.beginPath();
-  for(let i=0;i<10;i++){ const ang=(i/10)*Math.PI*2, rr=(i%2?r*0.42:r); gx.lineTo(Math.cos(ang)*rr,Math.sin(ang)*rr); }
-  gx.closePath(); gx.fill();
-  gx.fillStyle='#ffd23f'; gx.beginPath(); gx.arc(0,0,r*0.32,0,7); gx.fill();
-  gx.restore();
-}
-function drawParticles(){
-  gx.save();
-  for(const p of G.particles){
-    gx.globalAlpha=clamp(1-p.age/p.life,0,1); gx.fillStyle=p.c;
-    if(p.kind==='spark'){ gx.fillRect(p.x-p.s/2,p.y-p.s/2,p.s,p.s*2+p.s); }
-    else { gx.save(); gx.translate(p.x,p.y); gx.rotate(p.rot||0); gx.fillRect(-p.s/2,-p.s/2,p.s,p.s*0.72); gx.restore(); }
-  }
-  gx.globalAlpha=1; gx.restore();
-}
-// guided-calibration overlay: step dots, the current instruction, a live "how far
-// you've moved" meter, and a ✓ when a step is captured
-function drawCalibrationOverlay(){
-  const c=G.calib, stp=c.steps[c.idx], m=Math.min(W,H);
-  const INFO={
-    still:{t:'STAND STILL',       s:'arms relaxed — locking your neutral pose'},
-    jump: {t:'JUMP! ⬆',           s:'hop up so I can learn your jump'},
-    lane: {t:'STEP LEFT / RIGHT ↔',s:'step to a side so I can learn your lane switch'},
-    duck: {t:'DUCK DOWN! ⬇',      s:'crouch so I can learn your slide'},
-    ready:{t:'ALL SET! ✓',        s:'here we go…'}
-  }[stp]||{t:'',s:''};
-  gx.save();
-  gx.fillStyle='rgba(8,10,24,0.5)'; gx.fillRect(0,0,W,H);
-  const cx=W*0.5, cy=H*0.34;
-  // step dots
-  const dots=['still','jump','lane','duck'], gap=m*0.06, x0=cx-(dots.length-1)*gap/2, dy=cy-m*0.15;
-  for(let i=0;i<dots.length;i++){
-    const done=i<c.idx, cur=i===c.idx;
-    gx.beginPath(); gx.arc(x0+i*gap, dy, m*0.013, 0,7);
-    gx.fillStyle = done?'#3ef0a0' : (cur?'#5ee0ff':'rgba(255,255,255,0.25)'); gx.fill();
-    if(cur){ gx.strokeStyle='rgba(94,224,255,0.6)'; gx.lineWidth=3; gx.beginPath(); gx.arc(x0+i*gap,dy,m*0.026,0,7); gx.stroke(); }
-  }
-  gx.textAlign='center';
-  const flash=(c.confirm>0||c.doneFlash>0);
-  gx.fillStyle=flash?'#3ef0a0':'#5ee0ff'; gx.font='900 '+Math.round(m*0.072)+'px Trebuchet MS'; gx.fillText(INFO.t,cx,cy);
-  gx.fillStyle='rgba(234,240,255,0.92)'; gx.font='700 '+Math.round(m*0.028)+'px Trebuchet MS'; gx.fillText(INFO.s,cx,cy+m*0.055);
-  // live meter of the current action
-  if(stp!=='ready'){
-    const torso=G.body.torso||0.22, need=Math.max(0.05,jumpThreshold(torso));
-    let frac=0;
-    if(stp==='still') frac=clamp(c.t/0.9,0,1);
-    else if(stp==='jump') frac=clamp(c.jumpRise/need,0,1);
-    else if(stp==='duck') frac=clamp(c.duckDrop/need,0,1);
-    else if(stp==='lane') frac=clamp(c.laneReach/Math.max(0.06,need),0,1);
-    const mw=Math.min(W*0.5,360), mh=14, mx=cx-mw/2, my=cy+m*0.11;
-    gx.fillStyle='rgba(0,0,0,0.45)'; roundRect(mx,my,mw,mh,7); gx.fill();
-    gx.fillStyle=flash?'#3ef0a0':'#5ee0ff'; roundRect(mx,my,mw*frac,mh,7); gx.fill();
-  }
-  if(flash){ gx.fillStyle='#3ef0a0'; gx.font='900 '+Math.round(m*0.05)+'px Trebuchet MS'; gx.fillText('✓',cx,cy+m*0.2); }
-  gx.restore();
-}
-function roundRect(x,y,w,h,r){ gx.beginPath(); gx.moveTo(x+r,y); gx.arcTo(x+w,y,x+w,y+h,r); gx.arcTo(x+w,y+h,x,y+h,r); gx.arcTo(x,y+h,x,y,r); gx.arcTo(x,y,x+w,y,r); gx.closePath(); }
-
-/* --------------------------------- HUD ----------------------------------- */
-function updateHud(){
-  $('scoreV').textContent=Math.floor(G.score);
-  $('speedV').textContent=(G.speed/DIFF[G.diffKey].baseSpeed).toFixed(1)+'×';
-  $('bestV').textContent=G.best;
-  $('cadBar').style.width=(G.boost*100).toFixed(0)+'%';
-}
-function updateLaneDots(){ for(let i=0;i<3;i++) $('ld'+i).classList.toggle('on',i===G.lane); }
-function show(id,on){ const el=$(id); el.classList.toggle('hidden',!on); el.style.display=on?'':'none'; }
-
-/* ------------------------- leaderboard (client) -------------------------- */
-// Talks to /api/scores when a database is configured; ALWAYS keeps a local copy so the
-// game works fully offline / on a plain static deploy. Names are rendered via textContent
-// (never innerHTML) so user content can't inject markup.
-const LB=(()=>{
-  const KN='bodydash_name', KL='bodydash_local_scores';
-  let configured=null;
-  const getName=()=>{ try{ return localStorage.getItem(KN)||''; }catch(e){ return ''; } };
-  const setName=n=>{ try{ localStorage.setItem(KN,n); }catch(e){} };
-  const local=()=>{ try{ return JSON.parse(localStorage.getItem(KL)||'[]'); }catch(e){ return []; } };
-  const addLocal=r=>{ try{ const a=local(); a.push(r); a.sort((x,y)=>y.score-x.score); localStorage.setItem(KL, JSON.stringify(a.slice(0,20))); }catch(e){} };
-  async function fetchScores(diff){
-    try{
-      const res=await fetch('/api/scores?diff='+encodeURIComponent(diff),{cache:'no-store'});
-      const d=await res.json();
-      if(d && d.ok && d.configured){ configured=true; return {ok:true, scores:d.scores||[]}; }
-      configured=false; return {ok:false, offline:true};
-    }catch(e){ configured=false; return {ok:false, offline:true}; }
-  }
-  async function submit(rec){
-    addLocal(rec);                                   // always persist locally first
-    try{
-      const res=await fetch('/api/scores',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(rec)});
-      const d=await res.json();
-      if(d && d.ok){ configured=true; return {ok:true, rank:d.rank, best:d.best}; }
-      configured=false; return {ok:false, offline:true};
-    }catch(e){ configured=false; return {ok:false, offline:true}; }
-  }
-  return { getName, setName, local, addLocal, fetchScores, submit, isConfigured:()=>configured };
-})();
-
-let lbFromScreen='start', lbDiff='normal';
-function openLeaderboard(from){
-  lbFromScreen=from||'start'; lbDiff=G.diffKey;
-  show('startScreen',false); show('overScreen',false); show('howScreen',false); show('lbScreen',true);
-  document.querySelectorAll('#lbFilter button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.diff===lbDiff)));
-  renderLeaderboard();
-}
-function closeLeaderboard(){
-  show('lbScreen',false);
-  if(lbFromScreen==='over') show('overScreen',true);
-  else { show('startScreen',true); $('bestStart').textContent=G.best; }
-}
-function lbNote(text,big){ const n=document.createElement('div'); n.className='lbnote';
-  if(big){ const b=document.createElement('span'); b.className='big'; b.textContent=big; n.appendChild(b); }
-  n.appendChild(document.createTextNode(text)); return n; }
-function lbRow(rank,name,score,meLower){
-  const row=document.createElement('div'); row.className='lbrow'+(rank<=3?' top'+rank:'');
-  if(meLower && String(name).toLowerCase()===meLower) row.className+=' me';
-  const r=document.createElement('div'); r.className='lbrank'; r.textContent=(rank<=3?['🥇','🥈','🥉'][rank-1]:'#'+rank); row.appendChild(r);
-  const nm=document.createElement('div'); nm.className='lbname'; nm.textContent=name; row.appendChild(nm);   // XSS-safe
-  const sc=document.createElement('div'); sc.className='lbscore'; sc.textContent=score; row.appendChild(sc);
-  return row;
-}
-async function renderLeaderboard(){
-  const list=$('lbList'); list.textContent=''; list.appendChild(lbNote('Loading…'));
-  const res=await LB.fetchScores(lbDiff);
-  list.textContent='';
-  const me=(LB.getName()||'').toLowerCase();
-  if(res.ok){
-    if(!res.scores.length){ list.appendChild(lbNote('No scores yet — be the first! 🏁','🏁')); return; }
-    res.scores.forEach((s,i)=>list.appendChild(lbRow(i+1, s.name, s.score, me)));
-  } else {
-    list.appendChild(lbNote('Leaderboard offline — playing solo. Your best runs are saved on this device.','📴'));
-    const loc=LB.local().filter(r=>!r.diff||r.diff===lbDiff);
-    if(loc.length){ const h=document.createElement('div'); h.className='lbsub'; h.style.textAlign='center'; h.textContent='Your local top runs'; list.appendChild(h);
-      loc.slice(0,10).forEach((s,i)=>list.appendChild(lbRow(i+1, s.name||'You', s.score, me))); }
-  }
-}
-
-/* ---- character animation dynamics: banking, landing spring, scarf, rings ---- */
-function tickCharacter(dt){
-  dt=Math.min(dt,0.05);
-  // lane banking from the visual lane velocity
-  const lv=(G.laneX-G.prevLaneX)/Math.max(dt,1e-3); G.prevLaneX=G.laneX; G.laneVel=lv;
-  G.roll=lerp(G.roll, clamp(lv*0.10,-0.4,0.4), clamp(dt*10,0,1));
-  // landing squash spring — kick on the air->ground edge
-  const air=G.jump.active;
-  if(G.wasAir && !air){ G.squash=0.72; G.squashV=0; const f=playerFoot(); if(!REDUCED){ spawnDust(f.x,f.y); G.rings.push({x:f.x,y:f.y,age:0,life:0.24}); } G.shake=Math.max(G.shake,4); }
-  G.wasAir=air;
-  G.squashV += (1-G.squash)*170*dt - G.squashV*13*dt;   // spring toward 1
-  G.squash += G.squashV*dt;
-  if(G.rings.length){ for(const r of G.rings) r.age+=dt; G.rings=G.rings.filter(r=>r.age<r.life); }
-  // scarf: a lagging chain streaming off the headband (backward at speed, drooping at rest)
-  if(!G.scarf) G.scarf=Array.from({length:6},(_,i)=>({x:-0.3*i,y:0.05*i}));
-  const spd=(G.screen==='play')?G.speed:6;
-  const back=0.42+clamp(spd/12,0,1)*0.55, droop=0.34-clamp(spd/12,0,1)*0.22;
-  const fl=Math.hypot(back,droop)||1, ux=-back/fl, uy=droop/fl, sc=G.scarf, k=clamp(dt*13,0,1);
-  sc[0].x=0; sc[0].y=0;
-  for(let i=1;i<sc.length;i++){
-    sc[i].x=lerp(sc[i].x, sc[i-1].x+ux*0.34 - G.laneVel*0.03*i, k);
-    sc[i].y=lerp(sc[i].y, sc[i-1].y+uy*0.34, k);
-  }
-}
-
-/* ------------------------- opening title animation ------------------------ */
-function introEase(x){ x=clamp(x,0,1); const c=1.70158; return 1+(c+1)*Math.pow(x-1,3)+c*Math.pow(x-1,2); } // back-out overshoot
-function drawStrokeText(txt,x,y,color,fs){ gx.lineJoin='round'; gx.lineWidth=fs*0.09; gx.strokeStyle='#08122a'; gx.strokeText(txt,x,y); gx.fillStyle=color; gx.fillText(txt,x,y); }
-function drawIntro(t){
-  const T=G.introT, cx=W*0.5, cy=H*0.36, m=Math.min(W,H);
-  gx.textAlign='center'; gx.textBaseline='middle';
-  // hero rush: a neon streak dashing across the road band
-  if(!REDUCED && T>1.0 && T<2.05){ const p=(T-1.0)/1.05, hx=lerp(-W*0.1,W*1.1,p), hy=groundY()*0.9;
-    gx.save(); for(let i=8;i>=0;i--){ gx.globalAlpha=0.5*(1-i/9); gx.fillStyle=i%2?'#37e39a':'#5ee0ff';
-      gx.beginPath(); gx.ellipse(hx-i*m*0.05, hy, m*0.05, m*0.11,0,0,7); gx.fill(); }
-    gx.globalAlpha=1; gx.fillStyle='#eafff5'; gx.beginPath(); gx.ellipse(hx,hy,m*0.045,m*0.1,0,0,7); gx.fill(); gx.restore(); }
-  // logo slam: BODY from the left, DASH from the right, overshoot + settle
-  const fs=Math.min(W*0.15,104); gx.font='900 '+fs+'px Trebuchet MS';
-  drawStrokeText('BODY', lerp(-W*0.7,cx,clamp(introEase((T-0.35)/0.7),0,1)), cy-fs*0.46, '#5ee0ff', fs);
-  drawStrokeText('DASH', lerp(W*1.7,cx,clamp(introEase((T-0.5)/0.7),0,1)),  cy+fs*0.50, '#ff5da2', fs);
-  // tagline
-  if(T>1.7){ gx.globalAlpha=clamp((T-1.7)/0.5,0,1); gx.font='800 '+Math.round(m*0.03)+'px Trebuchet MS';
-    gx.fillStyle='#eaf0ff'; gx.fillText('MOVE YOUR BODY · BEAT THE ROAD', cx, cy+fs*1.05); gx.globalAlpha=1; }
-  // crossfade out toward the start overlay
-  if(T>2.35){ gx.fillStyle='rgba(12,16,34,'+(clamp((T-2.35)/0.25,0,1)*0.55)+')'; gx.fillRect(0,0,W,H); }
-  gx.textBaseline='alphabetic';
-}
-function stepIntro(dt){
-  G.introT+=dt;
-  if(!G._introKick && G.introT>=1.15){ G._introKick=true; if(!REDUCED){ G.flash=0.35; G.shake=8; } }  // logo-meet kick
-  if(G.shake>0) G.shake=Math.max(0,G.shake-dt*30);
-  if(G.flash>0) G.flash=Math.max(0,G.flash-dt*1.6);
-  if(G.introT >= (REDUCED?1.2:2.6)) finishIntro();
-}
-function finishIntro(){ if(G.screen!=='intro') return; G.screen='start'; show('skipIntro',false); show('startScreen',true); $('bestStart').textContent=G.best; }
-function skipIntro(){ if(G.screen==='intro') finishIntro(); }
-
-/* -------------------------------- loop ----------------------------------- */
-let last=0;
-function frame(ts){
-  const dt=Math.min(0.05,(last?ts-last:16)/1000); last=ts;
-  update(dt);
-  tickCharacter(dt);
-  if(G.screen==='intro') stepIntro(dt);
-  // ready lobby: hold ✌️ to start (brief dropouts don't fully reset the ring)
-  if(G.screen==='ready'){
-    if(G.gesture.victory) G.gesture.hold += dt;
-    else G.gesture.hold = Math.max(0, G.gesture.hold - dt*2);
-    const pct=clamp(G.gesture.hold/GESTURE_HOLD,0,1);
-    $('readyHint').innerHTML = G.gesture.victory
-      ? 'hold it… <b>'+Math.round(pct*100)+'%</b>' : '✌️ <b>Show a peace sign</b> to start';
-    if(G.gesture.hold>=GESTURE_HOLD) enterCalibration();
-  }
-  // guided calibration: stand still, then jump / step / duck on cue, then run
-  if(G.screen==='calib') stepCalibration(dt);
-  // game over: hold a 🧍 T-pose to restart (only while the over card is actually showing —
-  // not when the leaderboard overlay is open on top of it)
-  if(G.screen==='over' && visible('overScreen')){
-    if(G.gesture.tpose) G.gesture.tHold += dt;
-    else G.gesture.tHold = Math.max(0, G.gesture.tHold - dt*2);
-    const pct=clamp(G.gesture.tHold/GESTURE_HOLD,0,1);
-    $('restartHint').innerHTML = G.gesture.tpose
-      ? 'hold the T… <b>'+Math.round(pct*100)+'%</b>' : '🧍 <b>Make a T-shape</b> to restart';
-    if(G.gesture.tHold>=GESTURE_HOLD) startGame();
-  }
-  drawGame();
-  if(G.screen==='play') updateHud();
-  if(G.screen==='play'){
-    camStatus = G.body.seen ? 'tracking ✓ · step=lane · jump=hop · duck=slide · punch=smash · run=boost'
-                            : '⚠ step back — I can\'t see your full body';
-  }
-  requestAnimationFrame(frame);
-}
-
-/* ------------------------------- controls -------------------------------- */
-$('playBtn').addEventListener('click',async()=>{
-  Sound.on(); G.control='webcam';
-  if(initialized){ enterReady(); return; }   // camera/models already up -> straight to lobby
-  $('errMsg').classList.add('hidden');
-  $('loadWrap').classList.remove('hidden');
-  $('playBtn').disabled=true;
-  try{
-    await initCameraAndPose();
-    $('loadWrap').classList.add('hidden'); $('playBtn').disabled=false;
-    enterReady();
-  }catch(e){
-    $('loadWrap').classList.add('hidden'); $('playBtn').disabled=false;
-    const msg=(e&&e.name==='NotAllowedError')?'Camera permission was blocked. Allow camera access and try again.':
-              (e&&e.name==='NotFoundError')?'No camera found. Plug in a webcam and try again.':
-              (e&&e.message)||'Could not start the camera.';
-    const el=$('errMsg'); el.textContent='⚠ '+msg; el.classList.remove('hidden');
-  }
-});
-$('startBtn').addEventListener('click',()=>{ if(G.screen==='ready') enterCalibration(); });
-// keyboard / touch play buttons (no camera)
-$('playKeysBtn').addEventListener('click',()=>startWithScheme('keyboard'));
-$('playTouchBtn').addEventListener('click',()=>startWithScheme('touch'));
-// how to play
-$('howToBtn').addEventListener('click',()=>{ show('startScreen',false); show('howScreen',true); });
-$('howClose').addEventListener('click',()=>{ show('howScreen',false); show('startScreen',true); });
-// leaderboard
-$('lbBtn').addEventListener('click',()=>openLeaderboard('start'));
-$('overLbBtn').addEventListener('click',()=>openLeaderboard('over'));
-$('lbClose').addEventListener('click',closeLeaderboard);
-$('lbPlay').addEventListener('click',()=>{ show('lbScreen',false); if(lbFromScreen==='over') startGame(); else { show('startScreen',true); $('bestStart').textContent=G.best; } });
-document.querySelectorAll('#lbFilter button').forEach(b=>b.addEventListener('click',()=>{
-  lbDiff=b.dataset.diff;
-  document.querySelectorAll('#lbFilter button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));
-  renderLeaderboard();
-}));
-// name entry -> submit score
-$('submitScore').addEventListener('click',async()=>{
-  if(G._submitted) return;
-  let name=($('nameInput').value||'').trim().slice(0,20);
-  if(!name){ $('submitMsg').className='lbsub warn'; $('submitMsg').textContent='Enter a name first'; return; }
-  LB.setName(name);
-  const run=G._lastRun||{score:0,dist:0,diff:G.diffKey};
-  $('submitScore').disabled=true; $('submitScore').textContent='Submitting…';
-  $('submitMsg').className='lbsub'; $('submitMsg').textContent='';
-  const res=await LB.submit({name, score:run.score, diff:run.diff, dist:run.dist});
-  if(res.ok){ G._submitted=true; $('submitMsg').className='lbsub good'; $('submitMsg').textContent="✓ Submitted — you're #"+res.rank; $('submitScore').textContent='Submitted ✓'; }
-  else { $('submitMsg').className='lbsub warn'; $('submitMsg').textContent='Leaderboard offline — saved on this device.'; $('submitScore').disabled=false; $('submitScore').textContent='Submit'; }
-});
-$('nameInput').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); $('submitScore').click(); } });
-// skip the opening animation on any tap / the Skip button
-$('skipIntro').addEventListener('click',skipIntro);
-window.addEventListener('pointerdown',()=>{ if(G.screen==='intro') skipIntro(); });
-$('againBtn').addEventListener('click',()=>{ show('overScreen',false); startGame(); });
-$('homeBtn').addEventListener('click',()=>{ show('overScreen',false); show('hud',false); show('feedback',false); show('readyBar',false); show('topbtns',false); G.screen='start'; show('startScreen',true); $('bestStart').textContent=G.best; });
-$('muteBtn').addEventListener('click',()=>{ const m=!Sound.isMuted(); Sound.setMuted(m); $('muteBtn').textContent=m?'🔇':'🔊'; if(!m)Sound.on(); });
-$('camBtn').addEventListener('click',()=>{ G.camBig=!G.camBig; });
-document.querySelectorAll('#diffRow button').forEach(b=>b.addEventListener('click',()=>{
-  G.diffKey=b.dataset.diff;
-  document.querySelectorAll('#diffRow button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));
-}));
-
-/* ---- keyboard (primary in keys mode; universal fallback otherwise) ---- */
-const coarse=()=> !!(window.matchMedia && window.matchMedia('(pointer:coarse)').matches);
-const visible=id=> !$(id).classList.contains('hidden');
-window.addEventListener('keydown',e=>{
-  const k=e.key;
-  if(document.activeElement && document.activeElement.tagName==='INPUT') return;  // typing a name, etc.
-  if(G.screen==='intro'){ skipIntro(); return; }
-  if(!visible('lbScreen') && G.screen==='start' && visible('startScreen')){ if(k===' '||k==='Enter'){ e.preventDefault(); startWithScheme(coarse()?'touch':'keyboard'); } return; }
-  if(G.screen==='over' && visible('overScreen')){ if(k===' '||k==='Enter'){ e.preventDefault(); show('overScreen',false); startGame(); } return; }
-  if(G.screen!=='play') return;
-  if(k==='ArrowLeft'||k==='a'||k==='A'){ doLane(-1); e.preventDefault(); }
-  else if(k==='ArrowRight'||k==='d'||k==='D'){ doLane(1); e.preventDefault(); }
-  else if(k==='ArrowUp'||k==='w'||k==='W'||k===' '){ if(!G.jump.active&&!G.duck.active&&G.jumpCooldown<=0) triggerJump(); e.preventDefault(); }
-  else if(k==='ArrowDown'||k==='s'||k==='S'){ if(!G.jump.active&&!G.duck.active&&G.duckCooldown<=0) triggerDuck(); e.preventDefault(); }
-  else if(k==='f'||k==='F'||k==='j'||k==='J'){ if(G.punchCooldown<=0) triggerPunch(); e.preventDefault(); }
-  else if(k==='Shift'){ G.boostHeld=true; }
-});
-window.addEventListener('keyup',e=>{ if(e.key==='Shift') G.boostHeld=false; });
-// releasing a held key/pad can be missed on focus loss -> clear boost so it can't stick on
-window.addEventListener('blur',()=>{ G.boostHeld=false; $('boostPad').classList.remove('on'); });
-
-/* ---- touch / pointer swipes on the canvas + hold-to-boost pad ---- */
-let swST=null;
-gcv.addEventListener('pointerdown',e=>{ if(G.screen==='play') swST={x:e.clientX,y:e.clientY}; });
-gcv.addEventListener('pointerup',e=>{
-  if(G.screen!=='play'||!swST){ swST=null; return; }
-  const dx=e.clientX-swST.x, dy=e.clientY-swST.y, adx=Math.abs(dx), ady=Math.abs(dy); swST=null;
-  if(adx<26 && ady<26){ if(G.punchCooldown<=0) triggerPunch(); return; }   // tap = punch
-  if(adx>ady) doLane(dx>0?1:-1);
-  else if(dy<0){ if(!G.jump.active&&!G.duck.active&&G.jumpCooldown<=0) triggerJump(); }
-  else { if(!G.jump.active&&!G.duck.active&&G.duckCooldown<=0) triggerDuck(); }
-});
-gcv.addEventListener('pointercancel',()=>{ swST=null; });
-(function(){ const bp=$('boostPad'), set=on=>{ G.boostHeld=on; bp.classList.toggle('on',on); };
-  bp.addEventListener('pointerdown',e=>{ e.preventDefault(); set(true); });
-  ['pointerup','pointerleave','pointercancel'].forEach(ev=>bp.addEventListener(ev,()=>set(false)));
-})();
-
-/* --------------------------------- boot ---------------------------------- */
-function boot(){
-  try{ G.best=parseInt(localStorage.getItem('bodydash_best')||'0',10)||0; }catch(e){ G.best=0; }
-  $('bestStart').textContent=G.best; $('bestV').textContent=G.best;
-  document.querySelectorAll('#diffRow button').forEach(x=>x.setAttribute('aria-pressed',String(x.dataset.diff===G.diffKey)));
-  // one-time decor: twinkling starfield + two parallax mountain silhouettes
-  G.stars=Array.from({length:70},()=>({x:Math.random(), y:Math.random()*0.92, r:Math.random()*1.6+0.5, ph:Math.random()*6.28}));
-  G.mtns =Array.from({length:16},()=>0.35+Math.random()*0.65);
-  G.mtns2=Array.from({length:22},()=>0.25+Math.random()*0.55);
-  // play the opening title animation once, then reveal the start screen
-  G.screen='intro'; G.introT=0; G._introKick=false;
-  show('startScreen',false); show('skipIntro',true);
-  resize();
-  requestAnimationFrame(frame);
-}
-boot();
+  document.getElementById('playable').textContent = playable;
 </script>
 </body>
 </html>

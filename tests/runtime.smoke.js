@@ -4,7 +4,7 @@
    crash -> game over. Any thrown error or console.error fails the run.
    Run: node tests/runtime.smoke.js */
 const fs=require('fs'), vm=require('vm'), path=require('path');
-const html=fs.readFileSync(path.join(__dirname,'..','index.html'),'utf8');
+const html=fs.readFileSync(path.join(__dirname,'..','body-dash-2d.html'),'utf8');
 // take the LAST <script> (the game); the first is the CDN <script src> (no body)
 const bodies=[...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)].map(m=>m[1]).filter(s=>s.trim());
 const script0=bodies[bodies.length-1];
