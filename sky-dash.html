@@ -180,6 +180,12 @@
       <button class="btn" id="againBtn">&#9654; Play again</button>
     </div>
   </div>
+
+  <!-- CALIBRATION (Goal 3) — relax to a comfortable flying rest so controls baseline correctly -->
+  <div class="screen hidden" id="calibScreen"><div class="card">
+    <h1 class="title"><span class="a">GET</span><span class="b">READY</span></h1>
+    <div class="sub">&#129485; Relax your arms into a comfortable flying rest &mdash; calibrating&hellip;</div>
+  </div></div>
 </div>
 
 <!-- ENGINE — classic, no three.js (SPEC 3.1). Smoke test extracts the block below by its sentinel. -->
@@ -201,17 +207,27 @@ var ROUND_TIME=90;          // seconds (Manager Decision #2)
 var LIFT_MAX=3.5;           // clamp ceiling for a single flap impulse (SPEC §4.2)
 var ROLL_MAX=0.5;           // visual bank roll (rad) (SPEC §4.6)
 var GESTURE_HOLD=0.6;       // T-pose hold to start/restart (SPEC §4.8)
-var EMA=0.5;                // pose smoothing factor (SPEC §4.1)
+var EMA=0.35;               // pose smoothing (lower = steadier; was 0.5)
 var DEFAULT_NEUTRAL=-1.15;  // fallback resting avgRaise (arms relaxed) for pitch
 var FLAP_IMPULSE=2.4;       // keyboard flap lift impulse
 var KB_GLIDE=0.7;           // keyboard glide factor when not diving
 var CRUISE_ALT=30, START_ALT=30;   // comfortable flight band
-var CORRIDOR=14;            // |x| clamp (bounded corridor, SPEC §4.6)
-var APPLE_SWAY=5;           // apples stay within this |x| — well inside the corridor
+var CORRIDOR=120;           // soft, effectively-invisible lateral bound on an infinite z-strip (was 14)
+var APPLE_SWAY=60;          // collectibles spread across the open band (was 5)
 var APPLE_R=3.0;            // gameplay collect radius (forgiving; contract default is 2.2)
 var CRASH_R=1.6;            // bird crash radius (SPEC §4.9)
-var FIRST_Z=45, APPLE_GAP=55;      // apple spacing along +z (16th ≈ z=870 ≈ 62s at baseSpeed)
-var ALT_MAX=60;            // altitude ribbon display ceiling
+var FIRST_Z=45, APPLE_GAP=55;      // apple spacing along +z
+var MAX_ALT=60;             // GROUND-RELATIVE altitude ceiling (physics clamp; reads as air-resistance, raised so it's not a wall)
+var ALT_MAX=MAX_ALT;        // ribbon fills to 100% exactly at the ceiling
+// ---- control feel (Goal 6) ----
+var BANK_DEADZONE=0.12, PITCH_DEADZONE=0.22;
+var BANK_SENS=1.35, PITCH_SENS=1.15, TURN_SMOOTH=0.25;
+var TURN_SIGN=1;            // render-direction flip hook (Goal 1): whole turn direction flips from this ONE constant
+// ---- calibration (Goal 3) ----
+var CALIB_TIME=1.0, CALIB_RELAX=-0.4;   // sample only once arms drop to a relaxed rest (avgRaise below this)
+// ---- infinite world (Goal 5) ----
+var APPLE_BEHIND=25, APPLE_AHEAD=60, APPLE_SPREAD=320;
+var OBST_BEHIND=25,  OBST_AHEAD=70,  OBST_SPREAD=420;
 var PARAMS={ gravity:4.0, baseSpeed:14, vxDamp:0.9, turnAccel:16, maxVx:8,
              climbSlow:0.35, diveFast:0.5, glideDescent:0.35 };
 
@@ -238,8 +254,8 @@ function glideFactor(wristSpan, shoulderW, raiseL, raiseR){
 
 /* 4.4 bank rate — arm-height asymmetry → turn. BINDING: raiseL>raiseR ⇒ steer RIGHT (positive). */
 function bankRate(raiseL, raiseR, deadzone, maxRate){
-  if(deadzone==null) deadzone=0.15; if(maxRate==null) maxRate=1.0;
-  var diff=raiseL-raiseR;                 // + = leaning player-right
+  if(deadzone==null) deadzone=BANK_DEADZONE; if(maxRate==null) maxRate=1.0;
+  var diff=raiseL-raiseR;                 // + = lean/bank player-RIGHT (left wrist relatively higher)
   if(Math.abs(diff)<deadzone) return 0;   // resting/level = no turn
   return sign(diff)*Math.min(Math.abs(diff)-deadzone,1)*maxRate;   // + = RIGHT
 }
@@ -259,12 +275,19 @@ function stepFlight(state, controls, dt, params){
   var descent=p.gravity*(1-glide*(1-p.glideDescent));         // glide softens gravity
   state.vy=(state.vy||0)+lift-descent*dt;                     // flap up, gravity down
   state.speed=p.baseSpeed*(1-pitch*p.climbSlow)*(1+Math.max(0,-pitch)*p.diveFast); // climb→slower, dive→faster
-  state.vx=clamp((state.vx||0)*p.vxDamp+turn*p.turnAccel*dt,-p.maxVx,p.maxVx);      // bank → lateral steer
+  state.vx=clamp((state.vx||0)*p.vxDamp - turn*p.turnAccel*dt,-p.maxVx,p.maxVx);    // bank → lateral steer (turn>0 = RIGHT = world −x = screen-right)
   state.x=(state.x||0)+state.vx*dt;
   state.z=(state.z||0)+state.speed*dt;                        // auto-fly forward
   state.y=(state.y||0)+state.vy*dt;
-  state.roll=lerp(state.roll||0, clamp(-turn,-1,1)*ROLL_MAX, clamp(dt*8,0,1));      // visual bank
+  state.roll=lerp(state.roll||0, clamp(turn,-1,1)*ROLL_MAX, clamp(dt*8,0,1));       // visual bank dips INTO the turn
   return state;
+}
+
+/* 4.7 altitude ceiling (pure) — cap ground-relative altitude & kill upward vy at the cap. */
+function applyCeiling(bird, groundY, maxAlt){
+  var c=groundY+maxAlt;
+  if(bird.y>c){ bird.y=c; if((bird.vy||0)>0) bird.vy=0; }
+  return bird;
 }
 
 /* 4.9 collision / collect (pure). */
@@ -319,7 +342,10 @@ var G={
 };
 G.cam={ on:false, video:null, pose:null, stream:null, sending:false, poseSeen:false, seen:false,
   lm:null, raiseL:null, raiseR:null, avgRaise:0, wristSpan:0, shoulderW:0.1, shoulderY:0.5, torso:0.22,
-  neutralRaise:null, prevAvg:null, tpose:false, tHold:0 };
+  neutralRaise:null, prevAvg:null, tpose:false, tHold:0,
+  restL:0, restR:0, baseShoulderW:0.1, baseTorso:0.22, baseShoulderY:0.5, baseWristSpan:0.2,
+  calibrated:false, turnSmoothed:null, lastTurn:0, lastPitch:0, _graceL:0, _graceR:0,
+  _calT:0, _n:0, _sumL:0, _sumR:0, _sumAvg:0, _sumSW:0, _sumTorso:0, _sumSY:0, _sumSpan:0, _relaxed:false };
 
 /* ================================ tiny WebAudio sfx =========================== */
 var actx=null, muted=false;
@@ -402,19 +428,25 @@ function onPoseResults(res){
   if(!lm){ cam.seen=false; return; }
   var vis=function(i){ return lm[i]&&(lm[i].visibility===undefined||lm[i].visibility>0.5); };
   cam.tpose=isTpose(lm);
-  if(!(vis(11)&&vis(12)&&vis(15)&&vis(16))){ cam.seen=false; return; }
+  // Two-hand robustness (Goal 2): need the shoulders + at least ONE wrist. A single dropped wrist
+  // HOLDS its last-good raise (short grace); only both wrists or a shoulder lost freezes control.
+  var okSh=vis(11)&&vis(12), okL=vis(15), okR=vis(16);
+  if(!(okSh && (okL||okR))){ cam.seen=false; return; }
   cam.seen=true;
   var shoulderY=(lm[11].y+lm[12].y)/2;
   var shoulderW=Math.max(0.04,Math.abs(lm[11].x-lm[12].x));
   var hipsOk=vis(23)&&vis(24);
   var hipY=hipsOk?(lm[23].y+lm[24].y)/2:shoulderY+shoulderW*1.6;
   var torso=Math.max(0.05,Math.abs(hipY-shoulderY));
-  var raiseLraw=(shoulderY-lm[15].y)/torso;   // + = LEFT wrist above shoulders
-  var raiseRraw=(shoulderY-lm[16].y)/torso;   // + = RIGHT wrist above shoulders
-  cam.raiseL=(cam.raiseL==null)?raiseLraw:lerp(cam.raiseL,raiseLraw,EMA);
-  cam.raiseR=(cam.raiseR==null)?raiseRraw:lerp(cam.raiseR,raiseRraw,EMA);
+  if(okL){ var raiseLraw=(shoulderY-lm[15].y)/torso;   // + = LEFT wrist above shoulders
+    cam.raiseL=(cam.raiseL==null)?raiseLraw:lerp(cam.raiseL,raiseLraw,EMA); cam._graceL=0; }
+  else { cam._graceL=(cam._graceL||0)+1; }             // wrist dropped → hold cam.raiseL (~0.3s grace)
+  if(okR){ var raiseRraw=(shoulderY-lm[16].y)/torso;   // + = RIGHT wrist above shoulders
+    cam.raiseR=(cam.raiseR==null)?raiseRraw:lerp(cam.raiseR,raiseRraw,EMA); cam._graceR=0; }
+  else { cam._graceR=(cam._graceR||0)+1; }
+  if(cam.raiseL==null) cam.raiseL=0; if(cam.raiseR==null) cam.raiseR=0;
   cam.avgRaise=(cam.raiseL+cam.raiseR)/2;
-  cam.wristSpan=Math.abs(lm[15].x-lm[16].x);
+  if(okL&&okR) cam.wristSpan=Math.abs(lm[15].x-lm[16].x);   // else hold last-good span
   cam.shoulderW=shoulderW; cam.torso=torso; cam.shoulderY=shoulderY;
 }
 
@@ -425,11 +457,16 @@ function computeControls(dt){
   if(G.pendingLift>0){ lift+=G.pendingLift; G.pendingLift=0; }        // keyboard flaps
   if(G.control==='camera' && G.cam.seen){
     var c=G.cam, cur=c.avgRaise;
+    var rL=c.raiseL-(c.calibrated?c.restL:0);       // per-arm baseline subtraction (Goal 2 anti-drift)
+    var rR=c.raiseR-(c.calibrated?c.restR:0);
     if(c.prevAvg!=null){ var l=flapImpulse(c.prevAvg,cur,dt); if(l>0) lift+=l; }   // camera flap
     c.prevAvg=cur;
-    turn=bankRate(c.raiseL,c.raiseR);
-    pitch=pitchRate(c.avgRaise, (c.neutralRaise==null?DEFAULT_NEUTRAL:c.neutralRaise));
-    glide=glideFactor(c.wristSpan,c.shoulderW,c.raiseL,c.raiseR);
+    var rawTurn=clamp(bankRate(rL,rR,BANK_DEADZONE,1.0)*BANK_SENS,-1,1);
+    c.turnSmoothed=(c.turnSmoothed==null)?rawTurn:lerp(c.turnSmoothed,rawTurn,TURN_SMOOTH);  // output smoothing (Goal 6)
+    turn=TURN_SIGN*c.turnSmoothed; c.lastTurn=turn;    // ONE constant flips the whole render turn-direction (Goal 1)
+    pitch=clamp(pitchRate(c.avgRaise,(c.calibrated?c.neutralRaise:DEFAULT_NEUTRAL),PITCH_DEADZONE)*PITCH_SENS,-1,1);
+    c.lastPitch=pitch;
+    glide=glideFactor(c.wristSpan,(c.calibrated?c.baseShoulderW:c.shoulderW),rL,rR);
   } else if(G.control==='keyboard'){
     turn=(G.keys.right?1:0)-(G.keys.left?1:0);
     pitch=(G.keys.climb?1:0)-(G.keys.dive?1:0);
@@ -440,21 +477,41 @@ function computeControls(dt){
 
 /* ================================ game flow ================================== */
 function buildLevel(){
+  // Rolling field of exactly 16 apples / 22 obstacles seeded ahead of the bird (endless world, Goal 5).
+  var bz=(G.bird?G.bird.z:0);
   G.apples=[];
   for(var i=0;i<16;i++){
-    G.apples.push({ x:APPLE_SWAY*Math.sin(i*0.9), y:CRUISE_ALT+3*Math.sin(i*0.6), z:FIRST_Z+i*APPLE_GAP,
-      collected:false, seed:(i*0.6180339887)%1, popT:0 });
+    G.apples.push({ x:(Math.random()*2-1)*APPLE_SWAY, y:CRUISE_ALT+3*Math.sin(i*0.6),
+      z:bz+FIRST_Z+i*APPLE_GAP, collected:false, seed:Math.random(), popT:0 });
   }
-  // scenery obstacles: mountains/trees/rocks placed OUTSIDE the apple sway band so the
-  // intended path is solvable, but a bird that strays to the corridor edge will crash.
+  // obstacles biased toward the band edges (outside the core apple path) so the field stays solvable.
   G.obstacles=[];
   var types=['mountain','tree','rock'];
   for(var j=0;j<22;j++){
-    var side=(j%2)?1:-1;
-    var type=types[j%3];
-    var xoff=(type==='mountain')?13:10;
-    G.obstacles.push({ x:side*xoff, y:CRUISE_ALT, z:FIRST_Z+ j*(APPLE_GAP*0.75) + 28,
-      type:type, r:(type==='mountain')?4:1.5 });
+    var side=(j%2)?1:-1, type=types[j%3];
+    G.obstacles.push({ x:side*(APPLE_SWAY*0.4+Math.random()*APPLE_SWAY*0.5), y:CRUISE_ALT,
+      z:bz+FIRST_Z+j*(APPLE_GAP*0.75)+28, type:type, r:(type==='mountain')?4:1.5 });
+  }
+}
+/* calibration (Goal 3) — sample a RELAXED flying-rest to baseline every camera control. */
+function beginCalibration(){
+  var c=G.cam; c._calT=0; c._n=0; c._relaxed=false;
+  c._sumL=0; c._sumR=0; c._sumAvg=0; c._sumSW=0; c._sumTorso=0; c._sumSY=0; c._sumSpan=0;
+  G.screen='calib'; showScreen('calib');
+}
+function stepCalib(dt){
+  var c=G.cam; c._calT+=dt;
+  // only start averaging once the arms have actually dropped to a relaxed rest (avgRaise below CALIB_RELAX)
+  if(c.seen && c.avgRaise < CALIB_RELAX){ c._relaxed=true;
+    c._n++; c._sumL+=c.raiseL; c._sumR+=c.raiseR; c._sumAvg+=c.avgRaise;
+    c._sumSW+=c.shoulderW; c._sumTorso+=c.torso; c._sumSY+=c.shoulderY; c._sumSpan+=c.wristSpan; }
+  // commit after CALIB_TIME of relaxed sampling, or a hard-timeout at 4s so we never hang
+  if((c._relaxed && c._calT>=CALIB_TIME) || c._calT>=4.0){
+    if(c._n>0){ c.restL=c._sumL/c._n; c.restR=c._sumR/c._n; c.neutralRaise=c._sumAvg/c._n;
+      c.baseShoulderW=c._sumSW/c._n; c.baseTorso=c._sumTorso/c._n; c.baseShoulderY=c._sumSY/c._n;
+      c.baseWristSpan=c._sumSpan/c._n; c.calibrated=true; }
+    else { c.calibrated=false; c.neutralRaise=DEFAULT_NEUTRAL; }   // never fall back to a T-pose average
+    startGame();
   }
 }
 function startWithScheme(s){ audioOn(); if(s!=='camera' && G.cam.on) teardownCamera(); G.control=s; startGame(); }
@@ -465,10 +522,12 @@ function startGame(){
   G.bird={ x:0, y:START_ALT, z:0, vx:0, vy:0, vz:0, roll:0, pitch:0, speed:PARAMS.baseSpeed };
   G.controls={lift:0,turn:0,pitch:0,glide:0};
   buildLevel();
-  // capture the resting pose as the pitch neutral (SPEC §4.7)
-  if(G.control==='camera' && G.cam.seen) G.cam.neutralRaise=G.cam.avgRaise;
-  else if(G.cam.neutralRaise==null) G.cam.neutralRaise=DEFAULT_NEUTRAL;
-  G.cam.prevAvg=null; G.cam.tHold=0;
+  // consume the committed calibration baseline; fall back to defaults for keyboard / uncalibrated (SPEC §4.7)
+  if(!(G.control==='camera' && G.cam.calibrated)){
+    G.cam.neutralRaise=DEFAULT_NEUTRAL; G.cam.restL=0; G.cam.restR=0;
+    G.cam.baseShoulderW=G.cam.shoulderW||0.1; G.cam.calibrated=false;
+  }
+  G.cam.prevAvg=null; G.cam.tHold=0; G.cam.turnSmoothed=null; G.cam.lastTurn=0; G.cam.lastPitch=0;
   showScreen('play'); updateHud();
 }
 function stepPlay(dt){
@@ -478,12 +537,29 @@ function stepPlay(dt){
   stepFlight(G.bird,ctrl,dt,PARAMS);
   G.bird.pitch=ctrl.pitch;
   G.bird.x=clamp(G.bird.x,-CORRIDOR,CORRIDOR);
-  // collect apples (each counts once)
+  applyCeiling(G.bird, groundYAt(G.bird.x,G.bird.z), MAX_ALT);
+  // collect apples (each counts once) + recycle ahead → endless world (Goal 5); arrays mutated IN PLACE
   for(var i=0;i<G.apples.length;i++){ var ap=G.apples[i];
-    if(!ap.collected && appleCollected(G.bird,ap,APPLE_R)){ ap.collected=true; ap.popT=0; G.applesCollected++; onCollect(); } }
-  if(G.applesCollected>=16){ return gameOver('win'); }
+    if(!ap.collected && appleCollected(G.bird,ap,APPLE_R)){ ap.collected=true; ap.popT=0; G.applesCollected++; onCollect(); }
+    if(ap.z < G.bird.z - APPLE_BEHIND){
+      ap.z=G.bird.z+APPLE_AHEAD+Math.random()*APPLE_SPREAD;
+      ap.x=(Math.random()*2-1)*APPLE_SWAY; ap.y=CRUISE_ALT+3*Math.sin(ap.z*0.05);
+      ap.collected=false; ap.popT=0; ap.seed=Math.random();
+    }
+  }
+  for(var k=0;k<G.obstacles.length;k++){ var ob=G.obstacles[k];
+    if(ob.z < G.bird.z - OBST_BEHIND){
+      ob.z=G.bird.z+OBST_AHEAD+Math.random()*OBST_SPREAD;
+      // bias toward the band edges AND reject anything landing on the bird's imminent flight path
+      var nx, tries=0;
+      do { nx=(Math.random()<0.5?-1:1)*(APPLE_SWAY*0.4+Math.random()*APPLE_SWAY*0.5); }
+      while(Math.abs(nx-G.bird.x) < CRASH_R*3 && ++tries<8);
+      ob.x=nx;   // keep ob.type / ob.r
+    }
+  }
+  // no win-at-16 cap: endless world; the round ends only on crash or timeout
   if(isCrash(G.bird,groundYAt,G.obstacles,CRASH_R)){ return gameOver('crash'); }
-  if(G.timeLeft<=0){ return gameOver(G.applesCollected>=16?'win':'timeup'); }
+  if(G.timeLeft<=0){ return gameOver('timeup'); }
   updateHud();
 }
 function onCollect(){ sfx('coin'); var a=$('appleV'); if(a&&a.classList){ a.classList.remove('pop'); void (a.offsetWidth||0); a.classList.add('pop'); } }
@@ -501,6 +577,7 @@ function show(id,on){ var e=$(id); if(e&&e.classList) e.classList.toggle('hidden
 function showScreen(name){
   show('lobbyScreen', name==='lobby');
   show('overScreen', name==='over');
+  show('calibScreen', name==='calib');
   show('hud', name==='play');
   show('feedback', name==='play');
   show('altRibbon', name==='play');
@@ -557,6 +634,7 @@ var CON=[[11,12],[11,23],[12,24],[23,24],[11,13],[13,15],[12,14],[14,16],
   [15,17],[15,19],[15,21],[16,18],[16,20],[16,22],[0,11],[0,12]];
 function roundRect(gx,x,y,w,h,r){ gx.beginPath(); gx.moveTo(x+r,y); gx.arcTo(x+w,y,x+w,y+h,r); gx.arcTo(x+w,y+h,x,y+h,r); gx.arcTo(x,y+h,x,y,r); gx.arcTo(x,y,x+w,y,r); gx.closePath(); }
 function overlayStatus(){
+  if(G.screen==='calib') return 'relax your arms — calibrating…';
   if(G.screen==='lobby') return G.cam.tpose?'hold the T… taking off':'🧍 make a T-shape to fly';
   if(G.screen==='over')  return G.cam.tpose?'hold the T… restarting':'🧍 make a T-shape to fly again';
   return G.cam.seen?'tracking':'stand back so your whole body shows';
@@ -597,8 +675,9 @@ function update(ts){
   pumpCamera();
   if((G.screen==='lobby'||G.screen==='over') && G.control==='camera' && G.cam.on){
     if(G.cam.tpose) G.cam.tHold+=dt; else G.cam.tHold=Math.max(0,G.cam.tHold-dt*2);
-    if(G.cam.tHold>=GESTURE_HOLD){ G.cam.tHold=0; startGame(); }
+    if(G.cam.tHold>=GESTURE_HOLD){ G.cam.tHold=0; beginCalibration(); }
   }
+  if(G.screen==='calib') stepCalib(dt);
   if(G.screen==='play') stepPlay(dt);
   if(G.cam.on){ try{ drawCamOverlay(); }catch(e){} }
   if(typeof window!=='undefined' && typeof window.__skyRender==='function'){ try{ window.__skyRender(dt,t); }catch(e){} }
@@ -646,8 +725,9 @@ if(typeof requestAnimationFrame!=='undefined') requestAnimationFrame(update);
 /* ============================ test exposer (SPEC §6.2) ======================= */
 ;try{ globalThis.__sky = { G:G, update:update, startGame:startGame, onPoseResults:onPoseResults,
   flapImpulse:flapImpulse, glideFactor:glideFactor, bankRate:bankRate, pitchRate:pitchRate, stepFlight:stepFlight,
-  appleCollected:appleCollected, isCrash:isCrash, isTpose:isTpose,
-  computeScore:computeScore, flap:flap, startWithScheme:startWithScheme, groundYAt:groundYAt }; }catch(e){}
+  applyCeiling:applyCeiling, appleCollected:appleCollected, isCrash:isCrash, isTpose:isTpose,
+  computeScore:computeScore, flap:flap, startWithScheme:startWithScheme, beginCalibration:beginCalibration,
+  groundYAt:groundYAt }; }catch(e){}
 </script>
 
 <!-- VIEW — three.js module (T3). Loaded after the Engine. Contains ALL three.js; reads the
@@ -958,6 +1038,8 @@ try{
       recycleTiles(refZ);
       recycleScatter(refZ);
       if(G.obstacles !== lastObstaclesRef){ rebuildObstacles(G.obstacles); lastObstaclesRef=G.obstacles; }
+      else if(G.obstacles){ for(let i=0;i<obstacleMeshes.length && i<G.obstacles.length;i++){
+        const o=G.obstacles[i]; obstacleMeshes[i].position.x=o.x; obstacleMeshes[i].position.z=o.z; } }   // Goal 5c: sync recycled obstacle positions
       updateApples(G,t,dt);
 
       if(G.bird){
