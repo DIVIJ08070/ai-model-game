@@ -650,13 +650,347 @@ if(typeof requestAnimationFrame!=='undefined') requestAnimationFrame(update);
   computeScore:computeScore, flap:flap, startWithScheme:startWithScheme, groundYAt:groundYAt }; }catch(e){}
 </script>
 
-<!-- VIEW — three.js module (placeholder; T3 fills this). Loaded after the Engine. -->
+<!-- VIEW — three.js module (T3). Loaded after the Engine. Contains ALL three.js; reads the
+     Engine's game state G each frame via window.__skyRender(dt,t). If this block fails (offline
+     CDN), the Engine still runs — no render — graceful degrade (SPEC §3.1/§3.2/§8.1). -->
 <script type="module">
-/* T3 fills the three.js View here: import * as THREE from 'three'; build scene/terrain/
-   mountains/trees/rocks + 16 glowing spinning apples + procedural low-poly bird + trailing
-   camera + lighting/fog, then register window.__skyRender = (dt, t) => { read engine state,
-   position meshes, render }. Until then this is an intentionally empty, valid stub so the
-   page is valid and the Engine runs (graceful degrade — no render). SPEC §3.1/§3.2. */
+import * as THREE from 'three';
+(function(){
+try{
+  /* ---- palette (DESIGN_SPEC §1.2 / §5 / §6 — exact handoff hex) ---- */
+  const COL = {
+    fog:0xa9c9dd,
+    sky:[[0.00,'#0d1b3a'],[0.35,'#1e4fa0'],[0.62,'#3f86c8'],[0.82,'#8fc0e0'],[1.00,'#dfeaf0']],
+    grass:0x3f7d4e, grassLit:0x5b9a5a, grassShade:0x2f5d3f,
+    mtnRock:0x5a6b82, mtnSnow:0xe8eef5,
+    treeTrunk:0x5a3d28, treeFoliage:0x2f7d4a, rock:0x7b8494,
+    birdBody:0x22c3d6, birdWing:0x1aa7ba, birdBelly:0xff9e5c, birdBeak:0xffd23f, birdEye:0x0b1020,
+    appleBody:0xff3b4d, appleEmissive:0xe0223a, appleLeaf:0x3ef0a0, appleHalo:0xffd23f,
+    sun:0xfff4d6, hemiSky:0x9fbfe0, hemiGround:0x3f6b45
+  };
+
+  const canvas = document.getElementById('c3d');
+  if(!canvas) return;
+  const isCoarse = (typeof matchMedia==='function') &&
+    (matchMedia('(pointer: coarse)').matches || matchMedia('(max-width: 800px)').matches);
+
+  /* ---- renderer (SPEC §8.1 perf: clamp pixel ratio, shadows off on mobile) ---- */
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias:!isCoarse, powerPreference:'high-performance' });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+  if('outputColorSpace' in renderer) renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.shadowMap.enabled = !isCoarse;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  /* ---- scene, sky, fog (DESIGN_SPEC §6.3/§6.4) ---- */
+  const scene = new THREE.Scene();
+  function makeGradientSky(stops){
+    const c = document.createElement('canvas'); c.width = 16; c.height = 256;
+    const g = c.getContext('2d'); const grd = g.createLinearGradient(0,0,0,256);
+    stops.forEach(s => grd.addColorStop(s[0], s[1]));
+    g.fillStyle = grd; g.fillRect(0,0,16,256);
+    const tex = new THREE.CanvasTexture(c);
+    if('colorSpace' in tex) tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
+  scene.background = makeGradientSky(COL.sky);
+  scene.fog = new THREE.Fog(COL.fog, 40, isCoarse ? 170 : 240);
+
+  const camera = new THREE.PerspectiveCamera(58, window.innerWidth/window.innerHeight, 0.5, 900);
+
+  /* ---- lighting (DESIGN_SPEC §6.6) ---- */
+  const hemi = new THREE.HemisphereLight(COL.hemiSky, COL.hemiGround, 0.95);
+  scene.add(hemi);
+  const sun = new THREE.DirectionalLight(COL.sun, 1.4);
+  sun.position.set(-40, 80, 20);
+  if(!isCoarse){
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(1024,1024);
+    const s = 60;
+    sun.shadow.camera.left=-s; sun.shadow.camera.right=s; sun.shadow.camera.top=s; sun.shadow.camera.bottom=-s;
+    sun.shadow.camera.near=8; sun.shadow.camera.far=240; sun.shadow.bias=-0.0006;
+  }
+  scene.add(sun); scene.add(sun.target);
+
+  /* ---- shared flat-shaded materials ---- */
+  const M = {
+    birdBody:new THREE.MeshStandardMaterial({color:COL.birdBody, flatShading:true, roughness:0.55, metalness:0.05, emissive:0x0a3d45, emissiveIntensity:0.12}),
+    birdBelly:new THREE.MeshStandardMaterial({color:COL.birdBelly, flatShading:true, roughness:0.6}),
+    birdWing:new THREE.MeshStandardMaterial({color:COL.birdWing, flatShading:true, roughness:0.5}),
+    birdBeak:new THREE.MeshStandardMaterial({color:COL.birdBeak, flatShading:true, roughness:0.4}),
+    birdEye:new THREE.MeshStandardMaterial({color:COL.birdEye, roughness:0.3}),
+    mtnRock:new THREE.MeshStandardMaterial({color:COL.mtnRock, flatShading:true, roughness:0.95}),
+    mtnSnow:new THREE.MeshStandardMaterial({color:COL.mtnSnow, flatShading:true, roughness:0.8}),
+    treeTrunk:new THREE.MeshStandardMaterial({color:COL.treeTrunk, flatShading:true, roughness:0.9}),
+    treeFoliage:new THREE.MeshStandardMaterial({color:COL.treeFoliage, flatShading:true, roughness:0.85}),
+    rock:new THREE.MeshStandardMaterial({color:COL.rock, flatShading:true, roughness:0.9}),
+    terrain:new THREE.MeshStandardMaterial({vertexColors:true, flatShading:true, roughness:0.97, metalness:0}),
+    apple:new THREE.MeshStandardMaterial({color:COL.appleBody, emissive:COL.appleEmissive, emissiveIntensity:0.55, roughness:0.4}),
+    leaf:new THREE.MeshStandardMaterial({color:COL.appleLeaf, flatShading:true, roughness:0.6})
+  };
+
+  function meshAt(geo,mat,x,y,z){ const m=new THREE.Mesh(geo,mat); m.position.set(x,y,z); return m; }
+
+  /* =================== procedural low-poly bird (DESIGN_SPEC §5) =================== */
+  function buildBird(){
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.SphereGeometry(0.5,8,6), M.birdBody);
+    body.scale.set(1,0.8,1.7); body.castShadow=!isCoarse; g.add(body);
+    const belly = new THREE.Mesh(new THREE.SphereGeometry(0.42,8,6), M.birdBelly);
+    belly.scale.set(0.95,0.55,1.45); belly.position.set(0,-0.17,0.05); g.add(belly);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.32,8,6), M.birdBody);
+    head.position.set(0,0.28,0.85); head.castShadow=!isCoarse; g.add(head);
+    const beak = new THREE.Mesh(new THREE.ConeGeometry(0.12,0.34,4), M.birdBeak);
+    beak.rotation.x=Math.PI/2; beak.position.set(0,0.24,1.2); g.add(beak);
+    const eL = new THREE.Mesh(new THREE.SphereGeometry(0.06,6,6), M.birdEye); eL.position.set(0.15,0.36,1.02); g.add(eL);
+    const eR = eL.clone(); eR.position.x=-0.15; g.add(eR);
+    const tail = new THREE.Mesh(new THREE.ConeGeometry(0.2,0.55,3), M.birdWing);
+    tail.rotation.x=-Math.PI/2; tail.scale.set(1.4,1,0.4); tail.position.set(0,0.05,-0.95); g.add(tail);
+    // two-tone wings: top = wing teal, underside (-y) = coral belly → makes the flap read
+    const wingGeo = new THREE.BoxGeometry(1.5,0.06,0.62);
+    const wingMats = [M.birdWing,M.birdWing,M.birdWing,M.birdBelly,M.birdWing,M.birdWing];
+    const pivR = new THREE.Group(); pivR.position.set(0.32,0.06,0);
+    const wingR = new THREE.Mesh(wingGeo,wingMats); wingR.position.set(0.75,0,0); wingR.castShadow=!isCoarse; pivR.add(wingR); g.add(pivR);
+    const pivL = new THREE.Group(); pivL.position.set(-0.32,0.06,0);
+    const wingL = new THREE.Mesh(wingGeo,wingMats); wingL.position.set(-0.75,0,0); wingL.castShadow=!isCoarse; pivL.add(wingL); g.add(pivL);
+    g.userData = { pivR, pivL };
+    return g;
+  }
+  const bird = buildBird(); bird.visible=false; scene.add(bird);
+
+  /* =================== 16 apples (DESIGN_SPEC §6.1–6.2) =================== */
+  function makeGlowTex(){                                   // soft radial gold glow for the apple halo
+    const c=document.createElement('canvas'); c.width=c.height=64; const gx=c.getContext('2d');
+    const grd=gx.createRadialGradient(32,32,0,32,32,32);
+    grd.addColorStop(0,'rgba(255,210,63,0.95)'); grd.addColorStop(0.45,'rgba(255,210,63,0.35)'); grd.addColorStop(1,'rgba(255,210,63,0)');
+    gx.fillStyle=grd; gx.fillRect(0,0,64,64);
+    const t=new THREE.CanvasTexture(c); if('colorSpace' in t) t.colorSpace=THREE.SRGBColorSpace; return t;
+  }
+  const glowTex = makeGlowTex();
+  function buildApple(){
+    const g = new THREE.Group();
+    const bodyMat = M.apple.clone(); bodyMat.transparent=true;
+    const body = new THREE.Mesh(new THREE.SphereGeometry(0.55,12,10), bodyMat); body.scale.set(1,0.92,1); g.add(body);
+    const leafMat = M.leaf.clone(); leafMat.transparent=true;
+    const leaf = new THREE.Mesh(new THREE.ConeGeometry(0.13,0.26,4), leafMat); leaf.position.set(0.13,0.5,0); leaf.rotation.z=-0.5; g.add(leaf);
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.03,0.03,0.16,4), M.treeTrunk); stem.position.set(0,0.5,0); g.add(stem);
+    const haloMat = new THREE.SpriteMaterial({ map:glowTex, color:0xffffff, transparent:true, opacity:0.5, blending:THREE.AdditiveBlending, depthWrite:false, fog:false });
+    const halo = new THREE.Sprite(haloMat); halo.scale.set(2.4,2.4,1); g.add(halo);
+    g.userData = { bodyMat, leafMat, haloMat, pop:0, collectedSeen:false };
+    return g;
+  }
+  const applePool = [];
+  for(let i=0;i<16;i++){ const a = buildApple(); a.visible=false; scene.add(a); applePool.push(a); }
+
+  /* =================== terrain (DESIGN_SPEC §6.5) — low-poly hills, recycling ahead =================== */
+  const TILE_W=340, TILE_D=150, SEG=16, NTILES=5;
+  function terrainH(x,z){
+    return 4.5*Math.sin(x*0.05) + 3.2*Math.cos(z*0.032)
+         + 2.4*Math.sin((x*0.7 + z)*0.045) + 1.6*Math.cos(x*0.13 - z*0.02) - 2.0;
+  }
+  const cShade=new THREE.Color(COL.grassShade), cBase=new THREE.Color(COL.grass), cLit=new THREE.Color(COL.grassLit), tmpC=new THREE.Color();
+  function sampleTile(mesh){
+    const geo=mesh.geometry, pos=geo.attributes.position, col=geo.attributes.color;
+    const ox=mesh.position.x, oz=mesh.position.z;
+    for(let k=0;k<pos.count;k++){
+      const px=pos.getX(k), pz=pos.getZ(k);
+      const h=terrainH(ox+px, oz+pz); pos.setY(k,h);
+      const tt=Math.max(0,Math.min(1,(h+6)/16));
+      if(tt<0.5) tmpC.copy(cShade).lerp(cBase, tt*2); else tmpC.copy(cBase).lerp(cLit,(tt-0.5)*2);
+      col.setXYZ(k, tmpC.r, tmpC.g, tmpC.b);
+    }
+    pos.needsUpdate=true; col.needsUpdate=true; geo.computeVertexNormals();
+  }
+  const tiles=[];
+  for(let i=0;i<NTILES;i++){
+    const geo=new THREE.PlaneGeometry(TILE_W,TILE_D,SEG,SEG); geo.rotateX(-Math.PI/2);
+    geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(geo.attributes.position.count*3),3));
+    const mesh=new THREE.Mesh(geo, M.terrain); mesh.receiveShadow=!isCoarse;
+    mesh.position.set(0,0,(i-1)*TILE_D); sampleTile(mesh); scene.add(mesh); tiles.push(mesh);
+  }
+  function recycleTiles(refZ){
+    let guard=0;
+    while(guard++<NTILES){
+      let rear=tiles[0], maxZ=-1e9;
+      for(const t of tiles){ if(t.position.z<rear.position.z) rear=t; if(t.position.z>maxZ) maxZ=t.position.z; }
+      if(rear.position.z + TILE_D/2 < refZ - 40){ rear.position.z = maxZ + TILE_D; sampleTile(rear); }
+      else break;
+    }
+  }
+
+  /* =================== decorative scatter (trees + rocks on the ground), pooled & recycling =================== */
+  function buildSmallTree(){
+    const g=new THREE.Group();
+    const tr=new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.7,4,5), M.treeTrunk); tr.position.y=2; g.add(tr);
+    g.add(meshAt(new THREE.ConeGeometry(2.6,5,6), M.treeFoliage, 0,5.5,0));
+    g.add(meshAt(new THREE.ConeGeometry(1.9,4,6), M.treeFoliage, 0,8,0));
+    if(!isCoarse) g.traverse(o=>{ if(o.isMesh) o.castShadow=true; });
+    return g;
+  }
+  function buildScatterRock(){
+    const g=new THREE.Group();
+    const r=new THREE.Mesh(new THREE.IcosahedronGeometry(1.8,0), M.rock); r.scale.set(1.2,0.8,1.1); r.position.y=1; g.add(r);
+    const r2=new THREE.Mesh(new THREE.DodecahedronGeometry(1.0,0), M.rock); r2.position.set(1.2,0.6,0.4); g.add(r2);
+    if(!isCoarse) g.traverse(o=>{ if(o.isMesh) o.castShadow=true; });
+    return g;
+  }
+  const scatter=[]; const NSCAT=18, SCAT_SPAN=560;
+  for(let i=0;i<NSCAT;i++){
+    const g=(i%3===0)?buildScatterRock():buildSmallTree();
+    const side=(i%2)?1:-1, x=side*(20+(i*13)%60), z=i*(SCAT_SPAN/NSCAT);
+    g.position.set(x, terrainH(x,z), z); g.rotation.y=i; g.scale.setScalar(0.7+(i%5)*0.12);
+    scene.add(g); scatter.push(g);
+  }
+  function recycleScatter(refZ){
+    for(const s of scatter){
+      let guard=0;
+      while(s.position.z < refZ - 60 && guard++<4){
+        s.position.z += SCAT_SPAN;
+        const side=Math.random()<0.5?-1:1;
+        s.position.x = side*(20+Math.random()*70);
+        s.position.y = terrainH(s.position.x, s.position.z);
+        s.rotation.y = Math.random()*6.28; s.scale.setScalar(0.7+Math.random()*0.7);
+      }
+    }
+  }
+
+  /* =================== obstacle meshes aligned to Engine crash volumes (SPEC §8.1 / §4.9) ===================
+     The Engine owns crash volumes (spheres at y≈cruise). We render tall peaks/trees/rock columns
+     that rise from the ground into that band so a crash reads visually. Rebuilt when G.obstacles changes. */
+  function buildObstacle(type){
+    const g=new THREE.Group();
+    if(type==='mountain'){
+      const m=new THREE.Mesh(new THREE.ConeGeometry(9,46,6), M.mtnRock); m.position.y=17; g.add(m);
+      const snow=new THREE.Mesh(new THREE.ConeGeometry(3.4,10,6), M.mtnSnow); snow.position.y=35; g.add(snow);
+    } else if(type==='tree'){
+      const tr=new THREE.Mesh(new THREE.CylinderGeometry(0.9,1.3,20,6), M.treeTrunk); tr.position.y=8; g.add(tr);
+      g.add(meshAt(new THREE.ConeGeometry(5.5,12,7), M.treeFoliage, 0,16,0));
+      g.add(meshAt(new THREE.ConeGeometry(4.2,10,7), M.treeFoliage, 0,24,0));
+      g.add(meshAt(new THREE.ConeGeometry(2.8,9,7), M.treeFoliage, 0,31,0));
+    } else { // rock column
+      const r=new THREE.Mesh(new THREE.IcosahedronGeometry(5,0), M.rock); r.scale.set(1.2,4.2,1.2); r.position.y=18; g.add(r);
+      const r2=new THREE.Mesh(new THREE.DodecahedronGeometry(3.6,0), M.rock); r2.position.y=32; g.add(r2);
+    }
+    if(!isCoarse) g.traverse(o=>{ if(o.isMesh){ o.castShadow=true; o.receiveShadow=true; } });
+    return g;
+  }
+  const obstacleMeshes=[]; let lastObstaclesRef=null;
+  function rebuildObstacles(list){
+    for(const m of obstacleMeshes){ scene.remove(m); m.traverse(o=>{ if(o.isMesh && o.geometry) o.geometry.dispose(); }); }
+    obstacleMeshes.length=0;
+    if(!list) return;
+    for(const o of list){
+      const g=buildObstacle(o.type); g.position.set(o.x, 0, o.z); g.rotation.y=(o.z*0.7)%6.28;
+      scene.add(g); obstacleMeshes.push(g);
+    }
+  }
+
+  /* =================== per-frame updaters =================== */
+  function updateApples(G,t,dt){
+    const apples=G.apples||[];
+    for(let i=0;i<applePool.length;i++){
+      const m=applePool[i], a=apples[i], ud=m.userData;
+      if(!a){ m.visible=false; continue; }
+      if(a.collected && !ud.collectedSeen){ ud.collectedSeen=true; ud.pop=0.0001; }   // collect-pop trigger
+      if(!a.collected && ud.collectedSeen && ud.pop===0){ ud.collectedSeen=false; }    // reset on relevel (restart)
+      if(ud.pop>0){
+        ud.pop += dt/0.25;                                   // 250 ms pop (DESIGN_SPEC §6.2)
+        const p=Math.min(1,ud.pop);
+        m.visible=true; m.scale.setScalar(1+p*0.6); m.rotation.y+=3*dt;
+        ud.bodyMat.opacity=1-p; ud.leafMat.opacity=1-p;
+        ud.haloMat.opacity = p<0.5 ? (0.5+p*0.8) : (0.9*(1-(p-0.5)*2));   // flare 0.5→0.9→0
+        if(p>=1){ m.visible=false; ud.pop=0; }
+      } else if(!a.collected){
+        m.visible=true;
+        const bob=Math.sin((t+a.seed*10)*0.8*6.283)*0.12;   // gentle bob
+        m.position.set(a.x, a.y+bob, a.z);
+        m.rotation.y += 1.4*dt*(1+a.seed*0.3);               // spin ~1.4 rad/s, seed phase
+        m.scale.setScalar(1);
+        ud.bodyMat.opacity=1; ud.leafMat.opacity=1; ud.haloMat.opacity=0.5;
+      } else { m.visible=false; }
+    }
+  }
+
+  let flapClock=0, wingSettle=0.12;
+  function animateWings(G,t,dt){
+    const c=G.controls||{}, glide=c.glide||0;
+    const flapAmp=Math.max(0,Math.min(1,(G._flapDisp||0)));   // 0..1 flap intensity from Engine's HUD signal
+    const flapping=flapAmp>0.06;
+    flapClock += dt*(6 + flapAmp*20);
+    let dih;
+    if(glide>=0.6 && !flapping){ dih=0.0; }                   // GLIDE lock (only when NOT mid-flap): wings wide & flat
+    else {
+      const idle=0.06*Math.sin(t*0.6*6.283);
+      const beat=flapAmp*0.95*Math.sin(flapClock);            // +~61° up → -~48° down, scaled by lift
+      dih=0.12+idle+beat;                                     // soaring V rest + bob + flap beat
+    }
+    wingSettle += (dih-wingSettle)*Math.min(1,dt*14);
+    bird.userData.pivR.rotation.z = wingSettle;
+    bird.userData.pivL.rotation.z = -wingSettle;
+  }
+
+  const camPos=new THREE.Vector3(0,42,-20), camLook=new THREE.Vector3(0,22,20);
+  const _tp=new THREE.Vector3(), _tl=new THREE.Vector3();
+  function updateCamera(G,dt,refZ){
+    if(G.bird){
+      _tp.set(G.bird.x*0.55, G.bird.y+8.5, G.bird.z-16.5);   // trailing behind & above (SPEC §8.1)
+      _tl.set(G.bird.x*0.8, G.bird.y-5.5, G.bird.z+22);      // lookAt slightly ahead & down
+    } else {
+      _tp.set(Math.sin(refZ*0.01)*6, 42, refZ-20);           // idle drift over the world on lobby/over
+      _tl.set(0, 22, refZ+30);
+    }
+    const a=1-Math.pow(0.0015, Math.min(dt,0.05));            // frame-rate-independent lerp smoothing
+    camPos.lerp(_tp,a); camLook.lerp(_tl,a);
+    camera.position.copy(camPos); camera.lookAt(camLook);
+  }
+
+  /* =================== the render hook the Engine calls every frame =================== */
+  let idleZ=0;
+  window.__skyRender = function(dt,t){
+    try{
+      dt = Math.min(dt||0.016, 0.05);
+      const SK = window.__sky || {}; const G = SK.G || window.G;
+      if(!G){ renderer.render(scene,camera); return; }
+
+      let refZ;
+      if(G.bird){ refZ = G.bird.z; } else { idleZ += dt*8; refZ = idleZ; }
+
+      recycleTiles(refZ);
+      recycleScatter(refZ);
+      if(G.obstacles !== lastObstaclesRef){ rebuildObstacles(G.obstacles); lastObstaclesRef=G.obstacles; }
+      updateApples(G,t,dt);
+
+      if(G.bird){
+        bird.visible=true;
+        bird.position.set(G.bird.x, G.bird.y, G.bird.z);
+        bird.rotation.set(-(G.bird.pitch||0)*0.32, 0, (G.bird.roll||0));   // pitch (climb=nose up) + roll (bank)
+        animateWings(G,t,dt);
+      } else { bird.visible=false; }
+
+      updateCamera(G,dt,refZ);
+
+      if(!isCoarse){                                           // move the sun/shadow frustum with the action
+        const bx=G.bird?G.bird.x:0, by=G.bird?G.bird.y:30;
+        sun.position.set(bx-40, by+70, refZ-10);
+        sun.target.position.set(bx, by-4, refZ+8);
+      }
+      renderer.render(scene,camera);
+    }catch(e){ /* never throw back into the Engine loop */ }
+  };
+
+  /* ---- resize (SPEC §8.1) ---- */
+  function onResize(){
+    const w=window.innerWidth, h=window.innerHeight;
+    camera.aspect=w/h; camera.updateProjectionMatrix();
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
+    renderer.setSize(w,h,false);
+  }
+  window.addEventListener('resize', onResize);
+}catch(err){
+  /* View failed to initialise (e.g. WebGL unavailable). The Engine keeps running — graceful degrade. */
+  try{ console.warn('[sky-dash view] disabled:', err && err.message); }catch(e){}
+}
+})();
 </script>
 </body>
 </html>
