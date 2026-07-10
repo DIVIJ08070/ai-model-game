@@ -103,6 +103,44 @@ localStorage. Table schema: [`db/schema.sql`](db/schema.sql) (also auto-created 
 
 ---
 
+## 🦜 Sky Dash — a body-controlled flying game
+
+Flap your **arms like wings** in front of the webcam to fly a procedural low-poly **bird** over
+low-poly terrain, collecting **16 apples** and dodging the mountains, trees, and rocks before a
+**90-second** timer runs out. The whole game is self-contained in
+[`sky-dash.html`](sky-dash.html) — [three.js](https://threejs.org) **0.160.0** + MediaPipe Pose
+loaded from a CDN, no build step. Camera frames are processed **entirely in your browser** —
+nothing is uploaded. Your best score is saved locally (`localStorage["skydash_best"]`).
+
+### Controls
+
+| Action | 📷 Camera | ⌨ Keyboard |
+|---|---|---|
+| Flap (lift) | Wings down-stroke | Space / ▲ / W |
+| Glide | Arms wide & level | (auto when level) |
+| Climb / dive | Arms up = climb · arms tucked = dive | ▼ / S = dive |
+| Bank right | Raise **left** / lower **right** hand (`raiseL > raiseR`) | ► / D |
+| Bank left | Raise **right** / lower **left** hand | ◄ / A |
+| Start / restart | 🧍 T‑pose (hold 0.6 s) | Space / Enter |
+
+**Bank = lean into the turn:** raise your left hand / lower your right (`raiseL > raiseR`) and the
+bird steers **► RIGHT**. The camera is optional — keyboard mode plays the full game (flight,
+apples, timer, win / crash / time‑up) with no webcam.
+
+### Run it locally
+
+Camera access needs a **secure context** (localhost counts), so serve the folder:
+
+```bash
+python3 -m http.server 8000
+# open http://localhost:8000/sky-dash.html in Chrome/Edge
+```
+
+Keyboard mode needs nothing. Camera mode downloads the MediaPipe Pose model once (needs internet
+the first time) and requires `localhost` or HTTPS.
+
+---
+
 ## Tests
 
 Pure logic + headless runtime + API, no browser or DB needed:
@@ -111,6 +149,8 @@ Pure logic + headless runtime + API, no browser or DB needed:
 node tests/logic.test.js      # lane/jump/duck/punch signals, calibrated thresholds, detector routing
 node tests/runtime.smoke.js   # boots the whole game in a DOM/pose shim; drives camera AND keyboard runs
 node tests/api.test.js        # leaderboard handler with a mocked Postgres (validation, ranking, offline)
+node tests/sky-dash.logic.test.js  # Sky Dash flight math: flap/glide/bank/pitch, collision, isTpose
+node tests/sky-dash.smoke.js       # boots the Sky Dash engine in a DOM/pose shim; camera AND keyboard runs
 # or: npm test
 ```
 
