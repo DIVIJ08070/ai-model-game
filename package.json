@@ -7,6 +7,8 @@
     "node": ">=18"
   },
   "scripts": {
+    "dev": "python3 -m http.server 3000",
+    "dev:vercel": "vercel dev",
     "test": "node tests/logic.test.js && node tests/runtime.smoke.js && node tests/api.test.js"
   },
   "dependencies": {

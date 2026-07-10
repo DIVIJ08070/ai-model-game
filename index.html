@@ -3,195 +3,265 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta name="theme-color" content="#0c1022" />
-<meta name="description" content="A collection of webcam & motion-controlled browser games. Play with your body — no controller needed." />
+<meta name="theme-color" content="#000000" />
+<meta name="description" content="Motion Arcade — a collection of full-body, webcam-controlled browser games. No downloads, no controller. Just you." />
 <title>Motion Arcade — play with your body</title>
+
+<!-- Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link href="https://db.onlinewebfonts.com/c/8b75d9dcff6a48c35a46656192adf019?family=FSP+DEMO+-+PODIUM+Sharp+4.11" rel="stylesheet" />
+
+<!-- Tailwind (Play CDN — no build step) -->
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: {
+          podium: ['"FSP DEMO - PODIUM Sharp 4.11"', 'sans-serif'],
+          inter:  ['Inter', 'system-ui', 'sans-serif'],
+        }
+      }
+    }
+  }
+</script>
+
 <style>
-  :root{
-    --bg:#0c1022; --bg2:#0a0e1c; --panel:#141a33; --ink:#eaf0ff; --muted:#9aa6d0;
-    --cyan:#5ee0ff; --pink:#ff5da2; --green:#3ef0a0; --yellow:#ffd23f;
-    --purple:#7c5cff; --orange:#ff8a3c;
-    --line:rgba(255,255,255,0.10);
-  }
-  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  html,body{ margin:0; min-height:100%; }
-  body{
-    background:var(--bg); color:var(--ink);
-    font-family:'Trebuchet MS','Segoe UI',system-ui,-apple-system,sans-serif;
-    overflow-x:hidden; position:relative; min-height:100vh;
-  }
+  body{ font-family:'Inter',system-ui,sans-serif; background:#000; }
+  .font-podium{ font-family:'FSP DEMO - PODIUM Sharp 4.11','Inter',sans-serif; }
 
-  /* ---------- animated synthwave background ---------- */
-  .bg{ position:fixed; inset:0; z-index:-1; overflow:hidden; background:
-      radial-gradient(120% 80% at 50% -10%, #1b2350 0%, var(--bg) 55%, var(--bg2) 100%); }
-  .sun{
-    position:absolute; left:50%; top:8vh; width:min(60vw,420px); aspect-ratio:1;
-    transform:translateX(-50%); border-radius:50%;
-    background:radial-gradient(circle at 50% 45%, #ffd76a 0%, #ff7ad0 45%, #a24bff 70%, transparent 72%);
-    filter:blur(6px); opacity:.55;
-  }
-  .grid{
-    position:absolute; left:50%; bottom:-10vh; width:300vw; height:60vh;
-    transform:translateX(-50%) perspective(340px) rotateX(66deg);
-    background-image:
-      linear-gradient(var(--cyan) 2px, transparent 2px),
-      linear-gradient(90deg, var(--cyan) 2px, transparent 2px);
-    background-size:60px 60px; opacity:.22;
-    -webkit-mask-image:linear-gradient(to top, #000 20%, transparent 90%);
-            mask-image:linear-gradient(to top, #000 20%, transparent 90%);
-    animation:flow 3.5s linear infinite;
-  }
-  @keyframes flow{ to{ background-position:0 60px, 0 0; } }
-  @media (prefers-reduced-motion:reduce){ .grid{ animation:none; } }
+  /* ---- hero entrance animations ---- */
+  @keyframes fade-up { from{ opacity:0; transform:translateY(30px);} to{ opacity:1; transform:translateY(0);} }
+  @keyframes fade-in { from{ opacity:0;} to{ opacity:1;} }
+  @keyframes scale-in { from{ opacity:0; transform:scale(.9);} to{ opacity:1; transform:scale(1);} }
+  .animate-fade-up          { opacity:0; animation:fade-up .8s ease-out forwards; }
+  .animate-fade-up-delay-1  { opacity:0; animation:fade-up .8s ease-out .2s forwards; }
+  .animate-fade-up-delay-2  { opacity:0; animation:fade-up .8s ease-out .4s forwards; }
+  .animate-fade-up-delay-3  { opacity:0; animation:fade-up .8s ease-out .6s forwards; }
+  .animate-fade-up-delay-4  { opacity:0; animation:fade-up .8s ease-out .8s forwards; }
+  .animate-fade-in          { opacity:0; animation:fade-in .8s ease-out forwards; }
+  .animate-fade-in-delay    { opacity:0; animation:fade-in .8s ease-out .3s forwards; }
 
-  /* ---------- layout ---------- */
-  .wrap{ max-width:1080px; margin:0 auto; padding:clamp(20px,5vw,56px) 20px 80px; }
+  /* ---- mobile menu ---- */
+  .mobile-menu{ opacity:0; visibility:hidden; transition:opacity .5s ease, visibility .5s ease; }
+  .mobile-menu.open{ opacity:1; visibility:visible; }
+  .menu-item{ opacity:0; transform:translateY(20px); transition:opacity .5s ease, transform .5s ease; }
+  .mobile-menu.open .menu-item{ opacity:1; transform:translateY(0); }
 
-  header.hero{ text-align:center; margin-bottom:clamp(28px,6vw,56px); }
-  .kicker{
-    display:inline-block; font-size:11px; letter-spacing:3px; text-transform:uppercase;
-    font-weight:800; color:var(--cyan); border:1px solid var(--line);
-    padding:6px 14px; border-radius:999px; background:rgba(94,224,255,.06);
+  @media (prefers-reduced-motion:reduce){
+    [class*="animate-fade"]{ animation:none !important; opacity:1 !important; }
   }
-  h1{
-    font-size:clamp(38px,9vw,84px); line-height:.95; margin:18px 0 10px; font-weight:900;
-    letter-spacing:1px;
-    background:linear-gradient(90deg,var(--cyan),var(--pink) 60%,var(--purple));
-    -webkit-background-clip:text; background-clip:text; color:transparent;
-    text-shadow:0 0 40px rgba(124,92,255,.25);
-  }
-  .sub{ color:var(--muted); font-size:clamp(15px,3.4vw,19px); max-width:560px; margin:0 auto; }
-  .count{ margin-top:16px; font-size:13px; color:var(--muted); }
-  .count b{ color:var(--yellow); }
-
-  /* ---------- game grid ---------- */
-  .games{ display:grid; gap:20px; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); }
-
-  .card{
-    position:relative; display:flex; flex-direction:column; text-decoration:none; color:inherit;
-    background:linear-gradient(180deg,var(--panel),#10152a);
-    border:1px solid var(--line); border-radius:20px; padding:22px; min-height:230px;
-    overflow:hidden; transition:transform .18s ease, border-color .18s ease, box-shadow .18s ease;
-  }
-  .card::before{ /* accent glow */
-    content:""; position:absolute; inset:-1px; border-radius:20px; padding:1px; pointer-events:none;
-    background:linear-gradient(140deg, var(--accent,var(--cyan)), transparent 45%);
-    -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-    -webkit-mask-composite:xor; mask-composite:exclude; opacity:.5; transition:opacity .18s ease;
-  }
-  a.card:hover, a.card:focus-visible{
-    transform:translateY(-4px); border-color:transparent; outline:none;
-    box-shadow:0 18px 50px -12px color-mix(in srgb, var(--accent,var(--cyan)) 55%, transparent);
-  }
-  a.card:hover::before, a.card:focus-visible::before{ opacity:1; }
-
-  .thumb{
-    width:64px; height:64px; border-radius:16px; display:grid; place-items:center;
-    font-size:34px; margin-bottom:16px;
-    background:radial-gradient(circle at 35% 30%, color-mix(in srgb,var(--accent,var(--cyan)) 35%, transparent), rgba(0,0,0,.2));
-    border:1px solid var(--line);
-  }
-  .card h2{ font-size:22px; margin:0 0 6px; font-weight:900; }
-  .tags{ display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; }
-  .tag{
-    font-size:10px; letter-spacing:1px; text-transform:uppercase; font-weight:800;
-    color:var(--accent,var(--cyan)); border:1px solid var(--line); padding:3px 8px; border-radius:999px;
-    background:rgba(255,255,255,.03);
-  }
-  .card p{ color:var(--muted); font-size:14px; line-height:1.5; margin:0 0 18px; }
-  .play{
-    margin-top:auto; align-self:flex-start; font-weight:900; font-size:14px; letter-spacing:.5px;
-    padding:10px 18px; border-radius:12px; color:#0c1022;
-    background:linear-gradient(90deg,var(--accent,var(--cyan)),#fff 220%);
-  }
-
-  .badge{
-    position:absolute; top:16px; right:16px; font-size:10px; font-weight:900; letter-spacing:1.5px;
-    padding:5px 10px; border-radius:999px; color:#0c1022; background:var(--green);
-    box-shadow:0 0 20px color-mix(in srgb,var(--green) 60%, transparent);
-  }
-
-  /* coming-soon ghost card */
-  .card.soon{ border-style:dashed; opacity:.6; cursor:default; }
-  .card.soon .thumb{ filter:grayscale(1); opacity:.7; }
-  .card.soon .play{ background:var(--line); color:var(--muted); }
-
-  footer{ text-align:center; color:var(--muted); font-size:13px; margin-top:56px; }
-  footer a{ color:var(--cyan); text-decoration:none; }
 </style>
 </head>
-<body>
-  <div class="bg" aria-hidden="true"><div class="sun"></div><div class="grid"></div></div>
 
-  <div class="wrap">
-    <header class="hero">
-      <span class="kicker">Webcam · Motion · No controller</span>
-      <h1>MOTION ARCADE</h1>
-      <p class="sub">Browser games you play with your body. Stand up, turn on your camera, and move.</p>
-      <p class="count"><b id="playable">0</b> games playable · more on the way</p>
-    </header>
+<body class="bg-black text-white antialiased">
 
-    <main class="games" id="games"></main>
+  <!-- ================= HERO (full viewport, video background) ================= -->
+  <section class="relative h-[100svh] w-full overflow-hidden bg-black">
 
-    <footer>
-      Built by <a href="https://github.com/DIVIJ08070" target="_blank" rel="noopener">DIVIJ08070</a> ·
-      more games dropping soon 🎮
-    </footer>
+    <!-- background video -->
+    <video autoplay muted loop playsinline preload="auto"
+           class="absolute inset-0 w-full h-full object-cover">
+      <source src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260606_154941_df1a96e1-a06f-450c-bd02-d863414cc1a0.mp4" type="video/mp4" />
+    </video>
+
+    <!-- legibility overlays -->
+    <div class="absolute inset-0 bg-gradient-to-r from-black/80 via-black/45 to-black/20"></div>
+    <div class="absolute inset-0 bg-gradient-to-t from-black/85 via-transparent to-black/40"></div>
+
+    <!-- ---------------- Navbar ---------------- -->
+    <nav class="absolute top-0 inset-x-0 z-30 flex items-center justify-between px-6 sm:px-10 lg:px-16 py-5 lg:py-7">
+      <a href="#" class="font-podium text-white font-bold uppercase text-2xl sm:text-3xl tracking-wider whitespace-nowrap">Motion Arcade</a>
+
+      <!-- center links -->
+      <div class="hidden md:flex items-center gap-10">
+        <a href="#games" class="font-inter text-sm text-white/80 tracking-widest uppercase hover:text-white transition">Games</a>
+        <a href="#how"   class="font-inter text-sm text-white/80 tracking-widest uppercase hover:text-white transition">How It Works</a>
+        <a href="#about" class="font-inter text-sm text-white/80 tracking-widest uppercase hover:text-white transition">About</a>
+        <a href="https://github.com/DIVIJ08070" target="_blank" rel="noopener" class="font-inter text-sm text-white/80 tracking-widest uppercase hover:text-white transition">GitHub</a>
+      </div>
+
+      <!-- right button -->
+      <a href="game3d.html" class="hidden md:inline-flex items-center gap-2 border border-white/30 hover:border-white/60 px-6 py-3 text-xs tracking-widest uppercase hover:bg-white/10 transition">
+        Play Now
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg>
+      </a>
+
+      <!-- hamburger -->
+      <button id="menuOpen" aria-label="Open menu" class="md:hidden flex flex-col space-y-1.5">
+        <span class="block w-6 h-0.5 bg-white"></span>
+        <span class="block w-6 h-0.5 bg-white"></span>
+        <span class="block w-4 h-0.5 bg-white"></span>
+      </button>
+    </nav>
+
+    <!-- ---------------- Hero content ---------------- -->
+    <div class="relative z-20 h-full flex flex-col justify-center px-6 sm:px-10 lg:px-16">
+      <div class="max-w-4xl">
+
+        <!-- tagline -->
+        <div class="flex items-center gap-2 mb-6 lg:mb-8 text-white/70 animate-fade-up">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="m2 4 3 12h14l3-12-6 7-4-7-4 7-6-7z"/><path d="M5 20h14"/></svg>
+          <span class="text-xs sm:text-sm font-inter tracking-[0.3em] uppercase">Play with your body — no controller</span>
+        </div>
+
+        <!-- main heading -->
+        <h1 class="font-podium text-white uppercase leading-[0.92] tracking-tight animate-fade-up-delay-1">
+          <span class="block text-[clamp(2.8rem,8vw,7rem)]">Move.</span>
+          <span class="block text-[clamp(2.8rem,8vw,7rem)]">Dodge.</span>
+          <span class="block text-[clamp(2.8rem,8vw,7rem)]">Survive.</span>
+        </h1>
+
+        <!-- subtext -->
+        <p class="text-white/70 text-sm sm:text-base font-inter leading-relaxed max-w-md mt-6 lg:mt-8 animate-fade-up-delay-2">
+          Full-body webcam games, right in your browser.<br />
+          No downloads, no gamepad — <span class="text-white font-semibold">just you.</span>
+        </p>
+
+        <!-- CTA row -->
+        <div class="flex flex-wrap items-center gap-4 sm:gap-6 mt-8 lg:mt-10 animate-fade-up-delay-3">
+          <a href="game3d.html" class="group inline-flex items-center gap-2 bg-black hover:bg-neutral-900 px-5 sm:px-7 py-3 sm:py-4 text-[11px] sm:text-xs tracking-widest uppercase transition">
+            Play Now
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg>
+          </a>
+          <div class="hidden sm:flex items-center gap-3">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-8 h-8 text-white/50"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11"/></svg>
+            <div class="text-white/60 text-xs tracking-wider uppercase leading-tight">Body-Powered<br />Browser Arcade</div>
+          </div>
+        </div>
+
+        <!-- stats -->
+        <div class="flex flex-wrap gap-6 sm:gap-12 lg:gap-16 mt-8 sm:mt-10 lg:mt-14 animate-fade-up-delay-4">
+          <div>
+            <div class="font-inter text-white text-2xl sm:text-4xl lg:text-5xl font-bold tracking-tight">2</div>
+            <div class="text-white/50 text-[9px] sm:text-xs tracking-widest uppercase mt-1">Games Live</div>
+          </div>
+          <div>
+            <div class="font-inter text-white text-2xl sm:text-4xl lg:text-5xl font-bold tracking-tight">100%</div>
+            <div class="text-white/50 text-[9px] sm:text-xs tracking-widest uppercase mt-1">Body-Controlled</div>
+          </div>
+          <div>
+            <div class="font-inter text-white text-2xl sm:text-4xl lg:text-5xl font-bold tracking-tight">0</div>
+            <div class="text-white/50 text-[9px] sm:text-xs tracking-widest uppercase mt-1">Downloads</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- scroll hint -->
+    <a href="#games" class="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 text-white/40 hover:text-white text-[10px] tracking-[0.3em] uppercase animate-fade-in-delay">Scroll ↓</a>
+  </section>
+
+  <!-- ================= Mobile menu overlay ================= -->
+  <div id="mobileMenu" class="mobile-menu fixed inset-0 z-50 bg-black/95 backdrop-blur-sm">
+    <div class="flex items-center justify-between px-6 py-5">
+      <span class="font-podium text-white font-bold uppercase text-2xl tracking-wider">Motion Arcade</span>
+      <button id="menuClose" aria-label="Close menu" class="text-white">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-7 h-7"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+      </button>
+    </div>
+    <div class="flex flex-col items-center justify-center h-[calc(100%-80px)] gap-6">
+      <a href="#games" class="menu-item font-podium text-4xl sm:text-5xl text-white uppercase" style="transition-delay:100ms">Games</a>
+      <a href="#how"   class="menu-item font-podium text-4xl sm:text-5xl text-white uppercase" style="transition-delay:180ms">How It Works</a>
+      <a href="#about" class="menu-item font-podium text-4xl sm:text-5xl text-white uppercase" style="transition-delay:260ms">About</a>
+      <a href="https://github.com/DIVIJ08070" target="_blank" rel="noopener" class="menu-item font-podium text-4xl sm:text-5xl text-white uppercase" style="transition-delay:340ms">GitHub</a>
+      <a href="game3d.html" class="menu-item mt-4 inline-flex items-center gap-2 border border-white/40 hover:border-white px-8 py-4 text-xs tracking-widest uppercase text-white" style="transition-delay:420ms">
+        Play Now
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg>
+      </a>
+    </div>
   </div>
 
-<script>
-  /* ============================================================
-     ADD A NEW GAME:  copy one block below, change the fields,
-     drop your game's .html file in this folder, and set `href`.
-     Set soon:true for a "coming soon" placeholder (no link).
-     ============================================================ */
-  const GAMES = [
-    {
-      title: "Body Dash 3D",
-      emoji: "🏃",
-      href:  "game3d.html",
-      accent:"#7c5cff",
-      badge: "NEW",
-      tags:  ["3D", "Endless Runner", "Full-body"],
-      desc:  "A 3D endless runner controlled by your whole body. Jump, duck, and switch lanes with real movement."
-    },
-    {
-      title: "Body Dash · Classic 2D",
-      emoji: "🕹️",
-      href:  "body-dash-2d.html",
-      accent:"#5ee0ff",
-      tags:  ["2D", "Endless Runner", "Webcam"],
-      desc:  "The original camera-motion runner. Lean to change lanes, jump to leap, duck to slide — with a live leaderboard."
-    },
-    {
-      title: "Your next game",
-      emoji: "✨",
-      soon:  true,
-      accent:"#ff5da2",
-      tags:  ["Coming soon"],
-      desc:  "This slot is waiting. Build it, drop the file in, add one entry here, and it's live."
-    }
-  ];
+  <!-- ================= Games ================= -->
+  <section id="games" class="bg-black py-20 sm:py-28 px-6 sm:px-10 lg:px-16 border-t border-white/10">
+    <div class="max-w-6xl mx-auto">
+      <p class="font-inter text-xs tracking-[0.3em] uppercase text-white/50 mb-3">Playable now</p>
+      <h2 class="font-podium text-white text-[clamp(2rem,6vw,4.5rem)] uppercase leading-[0.95] tracking-tight mb-12">The Games</h2>
 
-  const el = document.getElementById('games');
-  let playable = 0;
-  for (const g of GAMES){
-    const soon = !!g.soon;
-    if (!soon) playable++;
-    const card = document.createElement(soon ? 'div' : 'a');
-    card.className = 'card' + (soon ? ' soon' : '');
-    if (!soon){ card.href = g.href; }
-    card.style.setProperty('--accent', g.accent || '#5ee0ff');
-    card.innerHTML = `
-      ${g.badge ? `<span class="badge">${g.badge}</span>` : ''}
-      <div class="thumb">${g.emoji || '🎮'}</div>
-      <h2>${g.title}</h2>
-      <div class="tags">${(g.tags||[]).map(t=>`<span class="tag">${t}</span>`).join('')}</div>
-      <p>${g.desc || ''}</p>
-      <span class="play">${soon ? 'Coming soon' : 'Play ▸'}</span>`;
-    el.appendChild(card);
-  }
-  document.getElementById('playable').textContent = playable;
-</script>
+      <div class="grid gap-6 md:grid-cols-3">
+        <!-- Body Dash 3D -->
+        <a href="game3d.html" class="group relative flex flex-col min-h-[340px] rounded-2xl border border-white/10 bg-gradient-to-b from-neutral-900 to-neutral-950 p-7 overflow-hidden hover:border-white/40 hover:-translate-y-1 transition duration-200">
+          <span class="absolute top-5 right-5 text-[10px] font-bold tracking-widest uppercase bg-white text-black px-3 py-1 rounded-full">New</span>
+          <div class="text-4xl">🏃</div>
+          <h3 class="font-podium text-2xl text-white uppercase mt-auto pt-6">Body Dash 3D</h3>
+          <p class="text-white/60 text-sm font-inter mt-2 leading-relaxed">A 3D endless runner controlled by your whole body. Jump, duck, and switch lanes with real movement.</p>
+          <span class="inline-flex items-center gap-1 text-xs tracking-widest uppercase mt-5 text-white/80 group-hover:text-white transition">
+            Play
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg>
+          </span>
+        </a>
+
+        <!-- Body Dash 2D -->
+        <a href="body-dash-2d.html" class="group relative flex flex-col min-h-[340px] rounded-2xl border border-white/10 bg-gradient-to-b from-neutral-900 to-neutral-950 p-7 overflow-hidden hover:border-white/40 hover:-translate-y-1 transition duration-200">
+          <div class="text-4xl">🕹️</div>
+          <h3 class="font-podium text-2xl text-white uppercase mt-auto pt-6">Body Dash · Classic 2D</h3>
+          <p class="text-white/60 text-sm font-inter mt-2 leading-relaxed">The original camera-motion runner. Lean to change lanes, jump to leap, duck to slide — with a live leaderboard.</p>
+          <span class="inline-flex items-center gap-1 text-xs tracking-widest uppercase mt-5 text-white/80 group-hover:text-white transition">
+            Play
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg>
+          </span>
+        </a>
+
+        <!-- Coming soon -->
+        <div class="relative flex flex-col min-h-[340px] rounded-2xl border border-dashed border-white/15 bg-neutral-950/50 p-7 overflow-hidden">
+          <div class="text-4xl opacity-60">✨</div>
+          <h3 class="font-podium text-2xl text-white/70 uppercase mt-auto pt-6">Your Next Game</h3>
+          <p class="text-white/40 text-sm font-inter mt-2 leading-relaxed">This slot is waiting. Build it, drop the file in, add one entry to the homepage — and it's live.</p>
+          <span class="inline-flex items-center gap-1 text-xs tracking-widest uppercase mt-5 text-white/30">Coming soon</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= How it works ================= -->
+  <section id="how" class="bg-neutral-950 py-20 sm:py-28 px-6 sm:px-10 lg:px-16 border-t border-white/10">
+    <div class="max-w-6xl mx-auto">
+      <p class="font-inter text-xs tracking-[0.3em] uppercase text-white/50 mb-3">Getting started</p>
+      <h2 class="font-podium text-white text-[clamp(2rem,6vw,4.5rem)] uppercase leading-[0.95] tracking-tight mb-12">How It Works</h2>
+
+      <div class="grid gap-10 md:grid-cols-3">
+        <div>
+          <div class="font-podium text-5xl text-white/20">01</div>
+          <h3 class="font-inter font-semibold text-white text-lg mt-3">Allow your camera</h3>
+          <p class="text-white/55 text-sm font-inter mt-2 leading-relaxed">Hit play and allow webcam access. Everything runs locally in your browser — nothing is uploaded.</p>
+        </div>
+        <div>
+          <div class="font-podium text-5xl text-white/20">02</div>
+          <h3 class="font-inter font-semibold text-white text-lg mt-3">Step back</h3>
+          <p class="text-white/55 text-sm font-inter mt-2 leading-relaxed">Stand back so your upper body fits in frame, with a little room to move side to side.</p>
+        </div>
+        <div>
+          <div class="font-podium text-5xl text-white/20">03</div>
+          <h3 class="font-inter font-semibold text-white text-lg mt-3">Move to play</h3>
+          <p class="text-white/55 text-sm font-inter mt-2 leading-relaxed">Lean, jump, and duck. Your body is the controller — no keys, no gamepad required.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= Footer / About ================= -->
+  <footer id="about" class="bg-black py-16 px-6 sm:px-10 lg:px-16 border-t border-white/10">
+    <div class="max-w-6xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-8">
+      <div>
+        <div class="font-podium text-2xl text-white uppercase tracking-wider">Motion Arcade</div>
+        <p class="text-white/50 text-sm font-inter mt-2 max-w-sm leading-relaxed">A growing collection of webcam &amp; motion-controlled browser games. Built by DIVIJ08070.</p>
+      </div>
+      <div class="flex items-center gap-8 text-sm font-inter tracking-widest uppercase">
+        <a href="#games" class="text-white/70 hover:text-white transition">Games</a>
+        <a href="https://github.com/DIVIJ08070" target="_blank" rel="noopener" class="text-white/70 hover:text-white transition">GitHub</a>
+        <a href="game3d.html" class="text-white/70 hover:text-white transition">Play</a>
+      </div>
+    </div>
+    <p class="text-white/30 text-xs font-inter mt-10 max-w-6xl mx-auto">© Motion Arcade · more games dropping soon 🎮</p>
+  </footer>
+
+  <script>
+    const menu = document.getElementById('mobileMenu');
+    document.getElementById('menuOpen').addEventListener('click', () => menu.classList.add('open'));
+    document.getElementById('menuClose').addEventListener('click', () => menu.classList.remove('open'));
+    menu.querySelectorAll('a').forEach(a => a.addEventListener('click', () => menu.classList.remove('open')));
+  </script>
 </body>
 </html>
