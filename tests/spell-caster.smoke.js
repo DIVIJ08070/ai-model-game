@@ -107,6 +107,21 @@ function feedHand(hd){ CURRENT_HAND=hd; try{ HANDS.cb && HANDS.cb({multiHandLand
   if(G.screen!=='ready') err('did not boot into the lobby (screen='+G.screen+')');
   if(G.control!=='keyboard') err('default control scheme should be keyboard (got '+G.control+')');
 
+  // 1.5) TUTORIAL — interactive first-run onboarding (opens via 📖, steps via Next, Skip works, persists seen)
+  if(!S.needsTutorial()) err('tutorial should be needed on a fresh visit');
+  byId('tutorialBtn')._fire('click');
+  if(G.screen!=='tutorial') err('📖 Tutorial button did not open the tutorial (screen='+G.screen+')');
+  if(!(S.TUT_STEPS && S.TUT_STEPS.length>=5)) err('tutorial has too few steps ('+(S.TUT_STEPS&&S.TUT_STEPS.length)+')');
+  let tg=0;                                                       // Next through every step (keyboard/camera-off path)
+  while(G.screen==='tutorial' && tg++<20){ byId('tutNext')._fire('click'); }
+  if(G.screen!=='ready') err('stepping through the tutorial did not return to the lobby (screen='+G.screen+')');
+  if(S.needsTutorial()) err('finishing the tutorial did not persist the seen flag');
+  if(store['spellcaster_tutorial_seen']!=='1') err('tutorial-seen flag not written to localStorage');
+  byId('tutorialBtn')._fire('click');                            // reopen…
+  if(G.screen!=='tutorial') err('reopening the tutorial (after seen) failed');
+  byId('tutSkip')._fire('click');                                // …and Skip closes it back to the lobby
+  if(G.screen!=='ready') err('Skip did not close the tutorial (screen='+G.screen+')');
+
   // 2) enter CAMERA mode (async: getUserMedia + BOTH-model warm-up)
   byId('playCamBtn')._fire('click');
   for(let i=0;i<30;i++){ await Promise.resolve(); await new Promise(r=>setTimeout(r,0)); }
