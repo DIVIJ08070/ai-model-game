@@ -1,0 +1,1066 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="theme-color" content="#0c1022" />
+<title>Pose Wall</title>
+<!-- three.js importmap (View block only — must precede the module script). SPEC §3.2 -->
+<script type="importmap">{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}</script>
+<style>
+  /* ---- [ARCADE] :root tokens — verbatim from sky-dash.html line 15 (DESIGN_SPEC §1.1) ---- */
+  :root{ --bg:#0c1022; --ink:#eaf0ff; --lane:#5ee0ff; --accent:#ff5da2; --good:#3ef0a0; --warn:#ffd23f; --bad:#ff3b5c; }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ margin:0; height:100%; width:100%; overflow:hidden; position:fixed; inset:0; background:var(--bg); color:var(--ink);
+    font-family:'Trebuchet MS','Segoe UI',system-ui,-apple-system,sans-serif; -webkit-user-select:none; user-select:none; touch-action:none; }
+  #app{ position:fixed; inset:0; }
+  #c3d{ position:absolute; inset:0; display:block; width:100%; height:100%; }
+  .hidden{ display:none !important; }
+
+  /* ---- [ARCADE] back-link (DESIGN_SPEC §2) ---- */
+  #backLink{ position:fixed; top:12px; left:12px; z-index:30; display:inline-flex; align-items:center; gap:6px;
+    background:rgba(20,26,51,0.72); border:2px solid rgba(94,224,255,0.35); color:var(--lane); border-radius:12px;
+    padding:8px 12px; font-weight:800; font-size:13px; text-decoration:none; }
+  #backLink:hover{ border-color:var(--lane); background:rgba(94,224,255,0.14); }
+
+  /* ---- [ARCADE] HUD stat stack (DESIGN_SPEC §4.1) ---- */
+  #hud{ position:absolute; top:56px; left:12px; z-index:7; display:flex; flex-direction:column; gap:8px; }
+  .stat{ background:rgba(20,26,51,0.72); border:2px solid rgba(255,255,255,0.12); border-radius:12px; padding:6px 12px; min-width:110px; }
+  .stat .k{ font-size:10px; letter-spacing:1.5px; text-transform:uppercase; opacity:0.65; font-weight:800; }
+  .stat .v{ font-size:22px; font-weight:900; line-height:1.05; font-variant-numeric:tabular-nums; }
+  .mini{ display:flex; gap:8px; } .mini .stat{ min-width:0; }
+  /* [NEW] Pose Wall stat colors */
+  #scoreV{ color:var(--good); }
+  #livesV{ letter-spacing:2px; }
+  #livesV.hit{ animation:lifehit .45s ease-out; }
+  @keyframes lifehit{ 0%,100%{transform:translateX(0);} 20%{transform:translateX(-4px);} 40%{transform:translateX(4px);} 60%{transform:translateX(-3px);} 80%{transform:translateX(2px);} }
+  #streakV{ color:var(--warn); display:inline-block; transform-origin:left center; }
+  #streakV.pop{ animation:streakpop .2s ease-out; }
+  @keyframes streakpop{ 0%{transform:scale(1);} 50%{transform:scale(1.2);} 100%{transform:scale(1);} }
+
+  /* ---- [NEW] match meter — bottom-center, clear of the bottom-right PIP (DESIGN_SPEC §4.3) ---- */
+  #matchMeter{ position:absolute; left:50%; bottom:16px; transform:translateX(-50%); z-index:7;
+    width:min(360px,84vw); background:rgba(20,26,51,0.72); border:2px solid rgba(255,255,255,0.14); border-radius:14px; padding:8px 12px; }
+  #matchMeter .k{ font-size:10px; letter-spacing:1.5px; text-transform:uppercase; opacity:0.7; font-weight:800; display:flex; justify-content:space-between; }
+  #matchTrack{ position:relative; margin-top:5px; height:12px; border-radius:8px; background:rgba(0,0,0,0.4); overflow:hidden; }
+  #matchFill{ position:absolute; left:0; top:0; height:100%; width:0%; border-radius:8px;
+    background:linear-gradient(90deg,var(--warn),var(--good)); transition:width .12s linear; }
+  #matchTick{ position:absolute; top:-2px; left:72%; width:2px; height:16px; background:rgba(255,255,255,0.65); } /* = PASS_THRESHOLD 0.72 */
+  #matchMeter.pass #matchFill{ box-shadow:0 0 12px var(--good), 0 0 4px var(--good); }
+  #matchMeter.pass .k{ opacity:1; color:var(--good); }
+
+  /* ---- [NEW] next-pose preview — top-right, opposite the stat stack, above the PIP (DESIGN_SPEC §4.4) ---- */
+  #nextPosePanel{ position:absolute; top:56px; right:12px; z-index:7; display:flex; flex-direction:column; align-items:center; gap:4px;
+    background:rgba(20,26,51,0.72); border:2px solid rgba(255,255,255,0.12); border-radius:12px; padding:8px 10px; }
+  #nextPosePanel .k{ font-size:10px; letter-spacing:1.5px; text-transform:uppercase; opacity:0.65; font-weight:800; }
+  #nextPose{ width:48px; height:48px; display:block; }
+  #nextPoseName{ font-size:10px; font-weight:800; color:var(--good); letter-spacing:0.4px; max-width:76px; text-align:center; line-height:1.1; }
+
+  /* ---- [ARCADE] webcam panel (DESIGN_SPEC §7) ---- */
+  #camWrap{ position:absolute; right:12px; bottom:12px; z-index:9; width:132px; height:99px; border-radius:12px; overflow:hidden;
+    border:2px solid rgba(94,224,255,0.55); box-shadow:0 6px 18px rgba(0,0,0,0.5); background:#05070f; }
+  #cam,#camOverlay{ position:absolute; inset:0; width:100%; height:100%; }
+  #cam{ object-fit:cover; transform:scaleX(-1); }
+
+  /* ---- [ARCADE] screens (DESIGN_SPEC §2) + [NEW] violet re-tint ---- */
+  .screen{ position:absolute; inset:0; z-index:20; display:flex; align-items:center; justify-content:center; padding:20px; text-align:center;
+    background:radial-gradient(120% 120% at 50% 0%, rgba(155,107,255,0.24), rgba(8,7,24,0.92)); backdrop-filter:blur(3px); }
+  .card{ width:min(560px,94vw); background:rgba(16,21,43,0.92); border:3px solid rgba(94,224,255,0.35); border-radius:24px; padding:26px 22px;
+    box-shadow:0 18px 50px rgba(0,0,0,0.55); max-height:94dvh; overflow:auto; }
+  .title{ font-weight:900; line-height:0.92; margin:0 0 6px; }
+  .title .a,.title .b{ display:block; font-size:clamp(30px,8vw,54px); -webkit-text-stroke:2px #08122a; paint-order:stroke fill; text-shadow:0 4px 0 #071026; }
+  /* [NEW] lobby title colors: POSE=green / WALL=magenta (DESIGN_SPEC §3.1) */
+  #lobbyScreen .title .a{ color:var(--good); }
+  #lobbyScreen .title .b{ color:var(--accent); }
+  .sub{ opacity:0.85; font-size:14px; margin:8px 0 16px; line-height:1.5; }
+  .btn{ appearance:none; border:none; border-radius:16px; cursor:pointer; font-family:inherit; font-weight:900; font-size:20px; padding:15px 22px; width:100%;
+    background:linear-gradient(180deg,var(--accent),#e0407f); color:#fff; box-shadow:0 6px 0 #7e1f47; letter-spacing:0.5px; }
+  .btn:active{ transform:translateY(4px); box-shadow:0 2px 0 #7e1f47; }
+  .btn.ghost{ background:transparent; border:2px solid rgba(255,255,255,0.3); color:var(--ink); box-shadow:none; }
+  .ctarow{ display:flex; gap:8px; margin-top:10px; } .ctarow .btn{ font-size:15px; padding:12px 8px; }
+  .linkbtn{ background:none; border:none; color:var(--lane); font-weight:800; font-size:14px; cursor:pointer; text-decoration:underline; text-underline-offset:3px; font-family:inherit; margin-top:12px; }
+  .mood{ font-size:19px; font-weight:900; margin:0 0 12px; }
+  .gostat{ display:flex; gap:10px; margin:14px 0 16px; }
+  /* [NEW] game-over stat cards recolored to the tunnel's neon-violet (DESIGN_SPEC §2) */
+  .gostat .s{ flex:1; background:rgba(155,107,255,0.14); border:2px solid rgba(155,107,255,0.5); border-radius:14px; padding:10px 6px; }
+  .gostat .n{ font-size:26px; font-weight:900; color:#b892ff; } .gostat .l{ font-size:10px; text-transform:uppercase; letter-spacing:1px; opacity:0.7; font-weight:800; }
+  .howtbl{ width:100%; border-collapse:collapse; font-size:13px; margin:6px 0 4px; } .howtbl th,.howtbl td{ border:1px solid rgba(255,255,255,0.1); padding:7px 8px; text-align:center; }
+  .howtbl th{ color:var(--lane); font-size:12px; } .howtbl td.act{ text-align:left; font-weight:800; }
+
+  /* ---- [ARCADE] focus-visible (DESIGN_SPEC §12) ---- */
+  *:focus-visible{ outline:3px solid var(--lane); outline-offset:2px; }
+
+  /* ---- [NEW] responsive (DESIGN_SPEC §10) ---- */
+  @media (max-width:400px){
+    #matchMeter{ width:min(300px,90vw); }
+    #nextPose{ width:40px; height:40px; }
+    #nextPosePanel{ padding:6px 8px; }
+    .stat{ min-width:96px; }
+    #streakV, #nextPoseName{ font-size:9px; }
+    #backLink{ padding:10px 12px; }
+  }
+  @media (min-width:768px){ #camWrap{ width:160px; height:120px; } #nextPose{ width:52px; height:52px; } }
+  @media (min-width:1280px){ #nextPose{ width:56px; height:56px; } }
+  @media (max-height:420px){ #camWrap{ bottom:64px; } }
+
+  /* ---- [NEW] reduced motion (DESIGN_SPEC §11) ---- */
+  @media (prefers-reduced-motion: reduce){
+    #streakV.pop, #livesV.hit{ animation:none; }
+    #matchFill{ transition:none; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="c3d"></canvas>
+
+  <!-- fixed back-to-arcade link (SPEC §2/§8) -->
+  <a id="backLink" href="/">&larr; Arcade</a>
+
+  <!-- webcam panel: hidden <video> frame source + skeleton overlay (SPEC §8 / DESIGN_SPEC §7) -->
+  <div id="camWrap" class="hidden">
+    <video id="cam" playsinline muted autoplay></video>
+    <canvas id="camOverlay" width="132" height="99" aria-hidden="true"></canvas>
+  </div>
+
+  <!-- in-game HUD: score / lives / streak (DESIGN_SPEC §4.1) -->
+  <div id="hud" class="hidden">
+    <div class="stat"><div class="k">Walls</div><div class="v" id="scoreV" aria-live="polite">0</div></div>
+    <div class="mini">
+      <div class="stat"><div class="k">Lives</div><div class="v" id="livesV" aria-live="polite">&#9829;&#9829;&#9829;</div></div>
+      <div class="stat"><div class="k">Streak</div><div class="v" id="streakV">0</div></div>
+    </div>
+  </div>
+
+  <!-- match % meter (DESIGN_SPEC §4.3) -->
+  <div id="matchMeter" class="hidden">
+    <div class="k"><span>Match</span><span id="matchPct">0%</span></div>
+    <div id="matchTrack"><div id="matchFill"></div><div id="matchTick" aria-hidden="true"></div></div>
+  </div>
+
+  <!-- next-pose preview (DESIGN_SPEC §4.4) -->
+  <div id="nextPosePanel" class="hidden">
+    <div class="k">Next</div>
+    <canvas id="nextPose" width="48" height="48" aria-hidden="true"></canvas>
+    <div id="nextPoseName">&mdash;</div>
+  </div>
+
+  <!-- LOBBY (DESIGN_SPEC §3.1) -->
+  <div class="screen" id="lobbyScreen">
+    <div class="card">
+      <h1 class="title"><span class="a">POSE</span><span class="b">WALL</span></h1>
+      <div class="sub">A wall with your shape cut out is rushing at you. <b>Strike the pose</b> to
+        fit through the hole before it hits &mdash; pass to score, miss to lose a life.</div>
+      <button class="btn" id="playKeysBtn">&#9654; Play (keyboard)</button>
+      <div class="ctarow"><button class="btn ghost" id="playCamBtn">&#128247; Camera</button></div>
+      <div id="camMsg" class="sub" style="text-align:center;color:var(--warn);min-height:1px;margin:10px 0 0"></div>
+      <div class="sub" style="margin:12px 0 0">&#129485; <b>T-pose to begin</b> &mdash; arms straight out.
+        Then <b>hold still a moment</b> while we lock onto you.</div>
+      <button class="linkbtn" id="howToBtn">How to play</button>
+      <div id="howto" class="hidden">
+        <table class="howtbl">
+          <tr><th>Goal</th><th>&#127909; Camera</th><th>&#9000; Keys</th></tr>
+          <tr><td class="act">Start / restart</td><td>Hold a T-pose ~0.6s</td><td>Enter / Space</td></tr>
+          <tr><td class="act">Match a wall</td><td>Copy the glowing shape</td><td>Press 1&ndash;8 (the pose #)</td></tr>
+          <tr><td class="act">Lock it in</td><td>(auto at the wall)</td><td>Enter / Space</td></tr>
+        </table>
+        <div class="sub" style="margin:0">Poses are <b>directional</b> &mdash; a shape with your
+          <b>left</b> arm up needs your <b>left</b> arm. The camera view is mirrored, so it feels
+          like a mirror.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- GAME OVER / WIN — two moods (DESIGN_SPEC §3.3) -->
+  <div class="screen hidden" id="overScreen">
+    <div class="card">
+      <h1 class="title"><span class="a" id="overTitleA">GAME</span><span class="b" id="overTitleB">OVER</span></h1>
+      <div id="overMood" class="mood">&#128165; Out of lives.</div>
+      <div class="gostat">
+        <div class="s"><div class="n" id="overScore">0</div><div class="l">Walls cleared</div></div>
+        <div class="s"><div class="n" id="overStreak">0</div><div class="l">Best streak</div></div>
+        <div class="s"><div class="n" id="overBest">0</div><div class="l">Best ever</div></div>
+      </div>
+      <div id="newBest" class="hidden" style="color:var(--good);font-weight:900;margin-bottom:8px">&#127881; New personal best!</div>
+      <div class="sub">&#129485; T-pose to play again</div>
+      <button class="btn" id="againBtn">&#9654; Play again</button>
+    </div>
+  </div>
+</div>
+
+<!-- VIEW (T3) — three.js module; sets window.__pwRender(dt,t) and reads window.__pw.G each frame.
+     Deferred (runs after the classic Engine below), and wrapped in try/catch so if three.js/the CDN/
+     WebGL fail the Engine keeps running with no render — graceful degrade (SPEC §3.4). -->
+<script type="module">
+/* =============================== POSE WALL — VIEW (T3) ===============================
+   All three.js lives here. Reads the Engine's game state each frame via window.__pw.G and the
+   render hook window.__pwRender(dt,t); the Engine owns ALL state/rules — the View only visualizes.
+   Wrapped in try/catch so if three.js / the CDN / WebGL fail, the Engine keeps running headless
+   (graceful degrade, SPEC §3.4). World palette + look per DESIGN_SPEC §5/§6/§9. */
+import * as THREE from 'three';
+(function(){
+try{
+  const clamp=(v,a,b)=>v<a?a:(v>b?b:v);
+  const reduced = (typeof matchMedia==='function') && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const isCoarse = (typeof matchMedia==='function') &&
+    (matchMedia('(pointer: coarse)').matches || matchMedia('(max-width: 800px)').matches);
+
+  /* ---- world palette (DESIGN_SPEC §9 — [NEW] three.js material colors) ---- */
+  const COL = {
+    sky:[[0.00,'#04040c'],[0.30,'#0a0a1e'],[0.58,'#170a2f'],[0.80,'#2a1150'],[1.00,'#3b1a63']],
+    fog:0x0a0a1c,
+    tunnelFloor:0x0a0a18, gridMajor:0x5ee0ff, gridMinor:0xff5da2,
+    railLeft:0x5ee0ff, railRight:0xff5da2, portalGlow:0x9b6bff, impactRing:0xffd23f,
+    slab:0x160b2e, slabEmissive:0x2a1150, slabRim:0x5ee0ff,
+    silGood:0x3ef0a0, silWarn:0xffd23f, avatarBase:0x5ee0ff, bad:0xff3b5c
+  };
+
+  const canvas = document.getElementById('c3d');
+  if(!canvas) return;
+
+  /* ---- renderer (SPEC §8 / R1 perf: clamp pixelRatio ≤2, antialias/shadows off on coarse) ---- */
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias:!isCoarse, powerPreference:'high-performance' });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+  if('outputColorSpace' in renderer) renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.shadowMap.enabled = false;   // dark neon scene reads from emissive/basic mats; no shadows (mobile perf)
+
+  /* ---- scene / gradient sky / fog (reuse Sky Dash makeGradientSky + Fog) ---- */
+  const scene = new THREE.Scene();
+  function makeGradientSky(stops){
+    const c = document.createElement('canvas'); c.width = 16; c.height = 256;
+    const g = c.getContext('2d'); const grd = g.createLinearGradient(0,0,0,256);
+    stops.forEach(s => grd.addColorStop(s[0], s[1]));
+    g.fillStyle = grd; g.fillRect(0,0,16,256);
+    const tex = new THREE.CanvasTexture(c);
+    if('colorSpace' in tex) tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
+  scene.background = makeGradientSky(COL.sky);
+  scene.fog = new THREE.Fog(COL.fog, 24, isCoarse ? 150 : 220);
+
+  const camera = new THREE.PerspectiveCamera(56, window.innerWidth/window.innerHeight, 0.1, 600);
+  scene.add(camera);   // so the camera-parented flash plane renders
+
+  /* ---- low-key lighting (DESIGN_SPEC §9: dim hemi + one soft violet key; neon is emissive/basic) ---- */
+  scene.add(new THREE.HemisphereLight(0x3b1a63, 0x0a0a18, 0.6));
+  const key = new THREE.DirectionalLight(0x9b6bff, 0.55); key.position.set(6,16,12); scene.add(key);
+
+  /* ---- depth/figure constants ---- */
+  const SPAWN_DIST=60, FAR_Z=88, FIG_SCALE=1.3, FIG_CY=3.2, FLOOR_Y=-1.5, WALL_W=14, WALL_H=9;
+  const distToZ = d => -(clamp(d,0,SPAWN_DIST)/SPAWN_DIST)*FAR_Z;   // dist 60(far) → -88 ; 0(impact) → 0
+
+  /* =============================== world dressing (DESIGN_SPEC §9) =============================== */
+  // dark floor slab
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(64,220),
+    new THREE.MeshStandardMaterial({ color:COL.tunnelFloor, roughness:1, metalness:0 }));
+  floor.rotation.x=-Math.PI/2; floor.position.set(0, FLOOR_Y, -70); scene.add(floor);
+
+  // receding neon grid — cyan depth rails + magenta cross-lines
+  function lineGrid(pts, color, opacity){
+    const geo = new THREE.BufferGeometry().setFromPoints(pts);
+    return new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color, transparent:true, opacity, fog:true }));
+  }
+  const gy = FLOOR_Y+0.02, cyanPts=[], magPts=[];
+  for(let x=-9;x<=9;x+=3){ cyanPts.push(new THREE.Vector3(x,gy,8), new THREE.Vector3(x,gy,-152)); }
+  for(let z=8; z>-152; z-=6){ magPts.push(new THREE.Vector3(-9,gy,z), new THREE.Vector3(9,gy,z)); }
+  scene.add(lineGrid(cyanPts, COL.gridMajor, 0.28));
+  scene.add(lineGrid(magPts,  COL.gridMinor, 0.14));
+
+  // glowing side rails (left cyan, right magenta)
+  const railGeo = new THREE.BoxGeometry(0.16,0.16,160);
+  const railL = new THREE.Mesh(railGeo, new THREE.MeshBasicMaterial({color:COL.railLeft}));  railL.position.set(-9.2, FLOOR_Y+0.12, -72); scene.add(railL);
+  const railR = new THREE.Mesh(railGeo, new THREE.MeshBasicMaterial({color:COL.railRight})); railR.position.set( 9.2, FLOOR_Y+0.12, -72); scene.add(railR);
+
+  // radial texture helper (portal glow, ring shockwave, flash)
+  function radialTex(stops){
+    const c=document.createElement('canvas'); c.width=c.height=128; const gx=c.getContext('2d');
+    const grd=gx.createRadialGradient(64,64,0,64,64,64); stops.forEach(s=>grd.addColorStop(s[0],s[1]));
+    gx.fillStyle=grd; gx.fillRect(0,0,128,128);
+    const t=new THREE.CanvasTexture(c); if('colorSpace' in t) t.colorSpace=THREE.SRGBColorSpace; return t;
+  }
+  // spawn portal glow at the far plane (walls are born out of it)
+  const portalTex = radialTex([[0,'rgba(155,107,255,0.9)'],[0.4,'rgba(155,107,255,0.35)'],[1,'rgba(155,107,255,0)']]);
+  const portal = new THREE.Sprite(new THREE.SpriteMaterial({ map:portalTex, transparent:true, opacity:0.75, blending:THREE.AdditiveBlending, depthWrite:false, fog:false }));
+  portal.position.set(0, FIG_CY, -FAR_Z-3); portal.scale.set(26,20,1); scene.add(portal);
+
+  // impact-plane marker ring on the floor at dist=0
+  const impactRing = new THREE.Mesh(new THREE.RingGeometry(4.6,5.1,44),
+    new THREE.MeshBasicMaterial({ color:COL.impactRing, transparent:true, opacity:0.5, side:THREE.DoubleSide }));
+  impactRing.rotation.x=-Math.PI/2; impactRing.position.set(0, FLOOR_Y+0.04, 0); scene.add(impactRing);
+
+  /* =============================== stick-figure builder (silhouette + avatar share it) ===============================
+     Same limb primitives for both so they visually rhyme (SPEC §8). Landmarks are normalized about
+     mid-hip and scaled by shoulder-width (equivalent to normalizePose), then MIRRORED in x and
+     flipped in y (three.js y-up) so the figure reads like a mirror (Manager Decision #5). */
+  const ARM_BONES = [['luArm',11,13],['lfArm',13,15],['ruArm',12,14],['rfArm',14,16],['shoulders',11,12]];
+  const LEG_BONES = [['lThigh',23,25],['lShin',25,27],['rThigh',24,26],['rShin',26,28]];
+  const JOINT_IDS = [11,12,13,14,15,16,23,24,25,26,27,28];
+  const _UP = new THREE.Vector3(0,1,0);
+  function orientBone(mesh,a,b){
+    if(!a||!b){ mesh.visible=false; return; }
+    const dx=b.x-a.x, dy=b.y-a.y, dz=b.z-a.z, len=Math.sqrt(dx*dx+dy*dy+dz*dz);
+    if(len<1e-4){ mesh.visible=false; return; }
+    mesh.visible=true;
+    mesh.position.set((a.x+b.x)/2,(a.y+b.y)/2,(a.z+b.z)/2);
+    mesh.scale.set(1,len,1);
+    mesh.quaternion.setFromUnitVectors(_UP, new THREE.Vector3(dx/len,dy/len,dz/len));
+  }
+  function visOK(lm,i){ return !!(lm && lm[i] && (lm[i].visibility===undefined || lm[i].visibility>=0.5)); }
+
+  function makeFigure(o){
+    const group = new THREE.Group();
+    const mat = new THREE.MeshBasicMaterial({ color:o.color, transparent:true, opacity:o.opacity });
+    mat.toneMapped=false;
+    const boneGeo = new THREE.CylinderGeometry(o.boneR,o.boneR,1,6);
+    const jointGeo = new THREE.SphereGeometry(o.jointR,8,6);
+    const headGeo = new THREE.SphereGeometry(o.headR,12,10);
+    const bones = {};
+    ARM_BONES.concat([['torso',0,0]]).concat(LEG_BONES).forEach(d=>{ const m=new THREE.Mesh(boneGeo,mat); group.add(m); bones[d[0]]=m; });
+    const joints = {};
+    JOINT_IDS.forEach(i=>{ const m=new THREE.Mesh(jointGeo,mat); group.add(m); joints[i]=m; });
+    const head = new THREE.Mesh(headGeo,mat); group.add(head);
+    return { group, mat, bones, joints, head, geos:[boneGeo,jointGeo,headGeo] };
+  }
+  function figNorm(lm){
+    if(!lm||!lm[11]||!lm[12]||!lm[23]||!lm[24]) return null;
+    const mhx=(lm[23].x+lm[24].x)/2, mhy=(lm[23].y+lm[24].y)/2;
+    let sw=Math.hypot(lm[11].x-lm[12].x, lm[11].y-lm[12].y); if(sw<1e-4) sw=1e-4;
+    return function(i){ const p=lm[i]; if(!p) return null;
+      return new THREE.Vector3(-((p.x-mhx)/sw)*FIG_SCALE, -((p.y-mhy)/sw)*FIG_SCALE, 0); };
+  }
+  function updateFigure(fig, lm){
+    const P = figNorm(lm);
+    if(!P){ fig.group.visible=false; return false; }
+    fig.group.visible=true;
+    const v={}; [0,11,12,13,14,15,16,23,24,25,26,27,28].forEach(i=>{ v[i]=P(i); });
+    orientBone(fig.bones.luArm, v[11], v[13]);
+    orientBone(fig.bones.lfArm, v[13], v[15]);
+    orientBone(fig.bones.ruArm, v[12], v[14]);
+    orientBone(fig.bones.rfArm, v[14], v[16]);
+    orientBone(fig.bones.shoulders, v[11], v[12]);
+    const midSh = v[11].clone().add(v[12]).multiplyScalar(0.5);
+    orientBone(fig.bones.torso, new THREE.Vector3(0,0,0), midSh);
+    fig.head.position.copy(v[0] || midSh.clone().add(new THREE.Vector3(0,FIG_SCALE*0.7,0)));
+    [11,12,13,14,15,16,23,24].forEach(i=>{ if(v[i]){ fig.joints[i].visible=true; fig.joints[i].position.copy(v[i]); } });
+    const legs = visOK(lm,25)&&visOK(lm,26)&&visOK(lm,27)&&visOK(lm,28);
+    fig.bones.lThigh.visible=fig.bones.lShin.visible=fig.bones.rThigh.visible=fig.bones.rShin.visible=legs;
+    [25,26,27,28].forEach(i=>{ fig.joints[i].visible=legs; });
+    if(legs){
+      orientBone(fig.bones.lThigh, v[23], v[25]); orientBone(fig.bones.lShin, v[25], v[27]);
+      orientBone(fig.bones.rThigh, v[24], v[26]); orientBone(fig.bones.rShin, v[26], v[28]);
+      [25,26,27,28].forEach(i=>{ if(v[i]) fig.joints[i].position.copy(v[i]); });
+    }
+    return true;
+  }
+
+  /* ---- the live player avatar at the impact plane (central feedback, DESIGN_SPEC §6) ---- */
+  const avatar = makeFigure({ boneR:0.10, jointR:0.13, headR:0.34, color:COL.avatarBase, opacity:0.5 });
+  avatar.group.position.set(0, FIG_CY, 0.6); scene.add(avatar.group);
+  const C_LANE=new THREE.Color(COL.avatarBase), C_GOOD=new THREE.Color(COL.silGood), C_WORK=new THREE.Color();
+  let avatarFlashUntil = -1;
+
+  /* ---- the active wall: translucent slab + rim + neon silhouette hole (DESIGN_SPEC §5) ---- */
+  const wall = new THREE.Group(); wall.visible=false; scene.add(wall);
+  const slabGeo = new THREE.BoxGeometry(WALL_W, WALL_H, 0.4);
+  const slabMat = new THREE.MeshStandardMaterial({ color:COL.slab, transparent:true, opacity:0.42,
+    roughness:0.35, metalness:0.0, emissive:COL.slabEmissive, emissiveIntensity:0.25, depthWrite:false, side:THREE.DoubleSide });
+  wall.add(new THREE.Mesh(slabGeo, slabMat));
+  const rimMat = new THREE.LineBasicMaterial({ color:COL.slabRim, transparent:true, opacity:0.5 });
+  wall.add(new THREE.LineSegments(new THREE.EdgesGeometry(slabGeo), rimMat));
+  const sil = makeFigure({ boneR:0.12, jointR:0.15, headR:0.38, color:COL.silGood, opacity:1.0 });
+  sil.group.position.set(0,0,0.3); wall.add(sil.group);   // wall group is placed at y=FIG_CY, so sil mid-hip = FIG_CY
+
+  /* ---- pass/miss FX: shatter shards + ring shockwave + full-frame flash (DESIGN_SPEC §5.2/§5.3) ---- */
+  const flashMat = new THREE.MeshBasicMaterial({ color:0xffffff, transparent:true, opacity:0, depthTest:false, depthWrite:false, fog:false, side:THREE.DoubleSide });
+  const flash = new THREE.Mesh(new THREE.PlaneGeometry(6,6), flashMat);
+  flash.position.set(0,0,-0.7); flash.renderOrder=999; camera.add(flash);
+
+  const ringTex = radialTex([[0,'rgba(255,255,255,0)'],[0.55,'rgba(255,255,255,0)'],[0.72,'rgba(255,255,255,0.95)'],[0.85,'rgba(255,255,255,0.45)'],[1,'rgba(255,255,255,0)']]);
+  const ring = new THREE.Sprite(new THREE.SpriteMaterial({ map:ringTex, transparent:true, opacity:0, blending:THREE.AdditiveBlending, depthWrite:false, fog:false }));
+  ring.visible=false; scene.add(ring); let ringLife=0; const RING_TTL=0.5;
+
+  const SHARD_N = reduced ? 0 : 14;
+  const shardGeo = new THREE.TetrahedronGeometry(0.5);
+  const shards = [];
+  for(let i=0;i<SHARD_N;i++){
+    const m = new THREE.Mesh(shardGeo, new THREE.MeshBasicMaterial({ color:0xffffff, transparent:true, opacity:0 }));
+    m.visible=false; scene.add(m);
+    shards.push({ mesh:m, vx:0,vy:0,vz:0, rvx:0,rvy:0, life:0, ttl:0.45 });
+  }
+  function triggerFX(kind){
+    const c = kind==='pass' ? COL.silGood : COL.bad;
+    flashMat.color.setHex(c); flashMat.opacity = kind==='pass' ? 0.26 : 0.5;
+    ring.position.set(0, FIG_CY, 0.6); ring.material.color.setHex(c); ring.material.opacity=0.9; ring.scale.set(1,1,1); ring.visible=true; ringLife=0;
+    if(kind==='miss') avatarFlashUntil = _t + 0.3;
+    for(const sh of shards){
+      sh.mesh.visible=true; sh.mesh.material.color.setHex(c); sh.mesh.material.opacity=1;
+      sh.mesh.position.set((Math.random()-0.5)*5, FIG_CY+(Math.random()-0.5)*5, 0.4);
+      sh.mesh.scale.setScalar(0.4+Math.random()*0.5);
+      sh.vx=(Math.random()-0.5)*7; sh.vy=(Math.random()-0.5)*6+2; sh.vz=6+Math.random()*11;   // fly outward + past the camera (+z)
+      sh.rvx=(Math.random()-0.5)*11; sh.rvy=(Math.random()-0.5)*11; sh.life=0; sh.ttl=0.45;
+    }
+  }
+  function stepFX(dt){
+    if(flashMat.opacity>0) flashMat.opacity = Math.max(0, flashMat.opacity - dt*(reduced?2.4:3.8));
+    if(ring.visible){ ringLife+=dt; const p=ringLife/RING_TTL;
+      if(p>=1){ ring.visible=false; } else { const s=1+p*11; ring.scale.set(s,s,1); ring.material.opacity=0.9*(1-p); } }
+    for(const sh of shards){ if(!sh.mesh.visible) continue; sh.life+=dt;
+      if(sh.life>=sh.ttl){ sh.mesh.visible=false; continue; }
+      sh.mesh.position.x+=sh.vx*dt; sh.mesh.position.y+=sh.vy*dt; sh.mesh.position.z+=sh.vz*dt;
+      sh.mesh.rotation.x+=sh.rvx*dt; sh.mesh.rotation.y+=sh.rvy*dt;
+      sh.mesh.material.opacity = 1-(sh.life/sh.ttl);
+    }
+  }
+
+  /* ---- camera: at the player's position looking down the depth axis, smooth lerp (SPEC §8).
+       Aimed at the figure's visual centre (~FIG_CY+1.3) and pulled back so an arms-up avatar frames fully. ---- */
+  const CAM_Y=FIG_CY+2.1, CAM_Z=13.5, LOOK_Y=FIG_CY+1.3;
+  const camPos=new THREE.Vector3(0, CAM_Y, CAM_Z), camLook=new THREE.Vector3(0, LOOK_Y, -28);
+  const _tp=new THREE.Vector3(), _tl=new THREE.Vector3();
+  function updateCamera(dt,t){
+    const sway = reduced ? 0 : Math.sin(t*0.3)*0.5;
+    _tp.set(sway, CAM_Y, CAM_Z);
+    _tl.set(sway*0.5, LOOK_Y, -28);
+    const a = reduced ? 1 : 1-Math.pow(0.0016, Math.min(dt,0.05));
+    camPos.lerp(_tp,a); camLook.lerp(_tl,a);
+    camera.position.copy(camPos); camera.lookAt(camLook);
+  }
+
+  /* ---- engine bridge (read-only) ---- */
+  let POSE_LIBRARY=null;
+  function poseById(id){ if(!POSE_LIBRARY) return null; for(let i=0;i<POSE_LIBRARY.length;i++){ if(POSE_LIBRARY[i].id===id) return POSE_LIBRARY[i]; } return null; }
+
+  /* =============================== the render hook the Engine calls every frame =============================== */
+  let prevScore=0, prevLives=3, prevScreen='', _t=0;
+  window.__pwRender = function(dt,t){
+    try{
+      dt = Math.min(dt||0.016, 0.05); _t=t;
+      const PW = window.__pw || {}; const G = PW.G;
+      if(PW.POSE_LIBRARY) POSE_LIBRARY = PW.POSE_LIBRARY;
+      if(!G){ updateCamera(dt,t); renderer.render(scene,camera); return; }
+
+      // resolution FX from Engine deltas (the resolved wall is replaced same-frame, so watch score/lives)
+      if(prevScreen!=='play' && G.screen==='play'){ prevScore=G.score; prevLives=G.lives; }
+      if(G.score>prevScore) triggerFX('pass');
+      if(G.lives<prevLives) triggerFX('miss');
+      prevScore=G.score; prevLives=G.lives; prevScreen=G.screen;
+
+      // active wall + neon silhouette
+      const w = (G.walls && G.walls[0]) ? G.walls[0] : null;
+      if(w && G.screen==='play'){
+        wall.visible=true;
+        wall.position.set(0, FIG_CY, distToZ(w.dist));
+        const pose = poseById(w.targetId);
+        if(pose){
+          updateFigure(sil, pose.lm);
+          const matched = (G.matchScore||0) >= 0.72;
+          const col = (pose.tier>=3 && !matched) ? COL.silWarn : COL.silGood;
+          sil.mat.color.setHex(col);
+          sil.mat.opacity = (reduced||matched) ? 1 : 0.82+0.18*(0.5+0.5*Math.sin(t*Math.PI*3));   // gentle ~1.5Hz pulse
+        }
+      } else { wall.visible=false; }
+
+      // live avatar — camera: smoothed landmarks ; keyboard: committed pose fixture (SPEC §8 / DESIGN_SPEC §6)
+      let src=null;
+      if(G.control==='camera'){ src = (G.cam && G.cam.seen) ? G.cam.smoothed : null; }
+      else { src = G.kbLm; }
+      if(src && updateFigure(avatar, src)){
+        const k = clamp((G.matchScore||0)/0.72, 0, 1);
+        C_WORK.copy(C_LANE).lerp(C_GOOD, k);
+        let op = 0.42 + 0.43*k;
+        if(t < avatarFlashUntil){ C_WORK.setHex(COL.bad); op = 0.9; }
+        avatar.mat.color.copy(C_WORK); avatar.mat.opacity = op;
+      } else { avatar.group.visible=false; }
+
+      stepFX(dt);
+      updateCamera(dt,t);
+      renderer.render(scene,camera);
+    }catch(e){ /* never throw back into the Engine loop */ }
+  };
+
+  /* ---- resize (SPEC §8 / R1) ---- */
+  function onResize(){
+    const w=window.innerWidth, h=window.innerHeight;
+    camera.aspect=w/h; camera.updateProjectionMatrix();
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
+    renderer.setSize(w,h,false);
+  }
+  window.addEventListener('resize', onResize);
+}catch(err){
+  /* View failed to initialise (offline CDN / no WebGL). The Engine keeps running — graceful degrade. */
+  try{ console.warn('[pose-wall view] disabled:', err && err.message); }catch(e){}
+}
+})();
+</script>
+
+<!-- ENGINE — classic script, NO three.js (SPEC §3.4). Placed LAST (satisfies PRD §6 "last
+     non-empty script" AND the sentinel selection). The smoke test extracts this block by its
+     sentinel. Contains everything pure + stateful: pose-match math (§5), 8-pose library (§6),
+     the G state machine (§10), rules (§9), calibration (§5.4), keyboard fallback (§7), camera/
+     pose boot, the canvas-2D skeleton overlay draw (§8), and the RAF loop. -->
+<script>
+/*__POSE_WALL_ENGINE__*/
+/* Pose Wall — Engine. The View (module block above) reads engine state via the optional render
+   hook window.__pwRender(dt,t). SPEC §3.4 / §5 / §9 / §10. */
+
+/* ---------------------------------- helpers ---------------------------------- */
+var clamp=function(v,a,b){ return v<a?a:(v>b?b:v); };
+var lerp=function(a,b,t){ return a+(b-a)*t; };
+var $=function(id){ return (typeof document!=='undefined'&&document.getElementById)?document.getElementById(id):null; };
+
+/* ============================ 5.1 tuning constants ==========================
+   Mirrored VERBATIM into tests/pose-wall.logic.test.js. */
+var PASS_THRESHOLD = 0.72;    // passesWall default
+var ANGLE_DEADZONE = 0.14;    // rad (~8°): errors below this read as a perfect limb
+var ARM_W   = 1.0;            // weight per arm limb (4 arm limbs)
+var TORSO_W = 0.6;            // weight of the torso-lean limb
+var LEG_W   = 0.4;            // weight per leg limb (4, only when in frame)
+var POSE_EMA  = 0.4;          // landmark-position smoothing per frame
+var MATCH_EMA = 0.35;         // match-meter smoothing per frame
+var GESTURE_HOLD = 0.6;       // T-pose hold seconds (reuse game3d.html)
+var WALLS_PER_LEVEL = 3;      // score per difficulty level
+var MAX_LEVEL = 8;            // difficulty normalization ceiling
+var WALL_BASE = 8, WALL_STEP = 1.5, WALL_MAX = 24;   // wall approach speed (units/sec)
+var SPAWN_DIST = 60;          // wall spawn distance to impact plane
+var LIVES_START = 3;          // Manager Decision #1
+var VIS_MIN = 0.5;            // landmark visibility gate
+var WIN_WALLS = 20;           // Manager Decision #4 — win at 20 walls cleared
+var EPS = 1e-6;
+
+/* ===================== PURE FUNCTIONS — mirrored into tests/pose-wall.logic.test.js =====================
+   f(numbers/landmarks) -> number/bool/object; no DOM, no globals besides the tuning consts above.
+   Landmarks are MediaPipe {x,y,visibility}, x,y in [0,1], y increasing downward (SPEC §5). */
+
+function mid(a,b){ return { x:(a.x+b.x)/2, y:(a.y+b.y)/2 }; }
+function dist(a,b){ var dx=a.x-b.x, dy=a.y-b.y; return Math.sqrt(dx*dx+dy*dy); }
+function visOK(lm,i){ return !!(lm && lm[i] && (lm[i].visibility===undefined || lm[i].visibility>=VIS_MIN)); }
+
+/* 5.3 normalizePose — translation- & scale-invariant keypoints (for the avatar + a tested guarantee). */
+function normalizePose(lm){
+  if(!lm||!lm[23]||!lm[24]||!lm[11]||!lm[12]) return [];
+  var midHipX=(lm[23].x+lm[24].x)/2, midHipY=(lm[23].y+lm[24].y)/2;
+  var sw=Math.max(EPS, dist(lm[11],lm[12]));
+  return lm.map(function(p){ if(!p) return {x:0,y:0}; return { x:(p.x-midHipX)/sw, y:(p.y-midHipY)/sw }; });
+}
+
+/* 5.3 limbAngle — 2D angle of vector a->b (y-down), in (-π, π]. */
+function limbAngle(a,b){ return Math.atan2(b.y-a.y, b.x-a.x); }
+
+/* 5.3 angleDiff — signed shortest angular difference (wrap-safe), in [-π, π]. */
+function angleDiff(a,b){ var d=a-b; while(d>Math.PI) d-=2*Math.PI; while(d<-Math.PI) d+=2*Math.PI; return d; }
+
+/* 5.3 limbSimilarity — angular similarity in [0,1] with a forgiving dead-zone. */
+function limbSimilarity(playerAngle, targetAngle, deadzone){
+  if(deadzone==null) deadzone=ANGLE_DEADZONE;
+  var d=Math.abs(angleDiff(playerAngle,targetAngle));
+  var eff=Math.max(0, d-deadzone);
+  return 1 - Math.min(eff,Math.PI)/Math.PI;
+}
+
+/* limb topology (BINDING keys/definitions, SPEC §5.2). */
+var CORE_KEYS = ['luArm','lfArm','ruArm','rfArm','torso'];
+var LEG_KEYS  = ['lThigh','lShin','rThigh','rShin'];
+var LIMB_W = { luArm:ARM_W, lfArm:ARM_W, ruArm:ARM_W, rfArm:ARM_W, torso:TORSO_W,
+               lThigh:LEG_W, lShin:LEG_W, rThigh:LEG_W, rShin:LEG_W };
+var LEG_LMS = { lThigh:[23,25], lShin:[25,27], rThigh:[24,26], rShin:[26,28] };
+function limbEndpoints(lm,k){
+  switch(k){
+    case 'luArm': return [lm[11],lm[13]];
+    case 'lfArm': return [lm[13],lm[15]];
+    case 'ruArm': return [lm[12],lm[14]];
+    case 'rfArm': return [lm[14],lm[16]];
+    case 'torso': return [mid(lm[23],lm[24]), mid(lm[11],lm[12])];   // midHip -> midShoulder
+    case 'lThigh': return [lm[23],lm[25]];
+    case 'lShin':  return [lm[25],lm[27]];
+    case 'rThigh': return [lm[24],lm[26]];
+    case 'rShin':  return [lm[26],lm[28]];
+  }
+  return null;
+}
+function limbAngleFor(lm,k){ var e=limbEndpoints(lm,k); return (e&&e[0]&&e[1])?limbAngle(e[0],e[1]):0; }
+
+/* 5.3 poseTarget — derive the target angle set from a landmark fixture. Always the 5 core limbs;
+   the 4 leg limbs iff lm[25..28] are visible (>= VIS_MIN). */
+function poseTarget(lm){
+  var limbs={}, weights={};
+  for(var i=0;i<CORE_KEYS.length;i++){ var k=CORE_KEYS[i]; limbs[k]=limbAngleFor(lm,k); weights[k]=LIMB_W[k]; }
+  var hasLegs = visOK(lm,25)&&visOK(lm,26)&&visOK(lm,27)&&visOK(lm,28);
+  if(hasLegs){ for(var j=0;j<LEG_KEYS.length;j++){ var lk=LEG_KEYS[j]; limbs[lk]=limbAngleFor(lm,lk); weights[lk]=LIMB_W[lk]; } }
+  return { limbs:limbs, weights:weights, hasLegs:hasLegs };
+}
+
+/* 5.3 poseMatchScore — weighted averaged angular similarity, in [0,1]. Arms dominate
+   (ARM_W > TORSO_W > LEG_W). Legs scored only when the target authors them AND the player's leg
+   landmarks are visible. Deterministic; matching works on raw OR normalized landmarks. */
+function poseMatchScore(lm, target, opts){
+  var wsum=0, wtot=0;
+  for(var k in target.limbs){
+    if(LEG_KEYS.indexOf(k)>=0){
+      if(!target.hasLegs) continue;
+      var idx=LEG_LMS[k];
+      if(!(visOK(lm,idx[0])&&visOK(lm,idx[1]))) continue;   // player's legs not in frame
+    }
+    var pa=limbAngleFor(lm,k), w=target.weights[k];
+    wsum += w*limbSimilarity(pa, target.limbs[k]);
+    wtot += w;
+  }
+  return wtot>0 ? wsum/wtot : 0;
+}
+
+/* 5.3 passesWall. */
+function passesWall(score, thr){ if(thr==null) thr=PASS_THRESHOLD; return score >= thr; }
+
+/* 5.3 isTpose — reused VERBATIM from game3d.html / tests/logic.test.js (start/restart only). */
+function isTpose(lm){ if(!lm) return false;
+  var vis=function(i){ return lm[i]&&(lm[i].visibility===undefined||lm[i].visibility>0.5); };
+  if(!(vis(11)&&vis(12)&&vis(15)&&vis(16))) return false;
+  var shY=(lm[11].y+lm[12].y)/2, shW=Math.abs(lm[11].x-lm[12].x)+1e-6, span=Math.abs(lm[15].x-lm[16].x);
+  if(span<shW*2.2) return false; var tol=shW*0.9;
+  return Math.abs(lm[15].y-shY)<tol && Math.abs(lm[16].y-shY)<tol; }
+
+/* 5.3 difficulty ladder (all monotonic non-decreasing). */
+function levelForScore(score){ return 1 + Math.floor(score/WALLS_PER_LEVEL); }
+function maxTierForLevel(level){ return level<2 ? 1 : (level<4 ? 2 : 3); }
+function wallSpeed(level){ return clamp(WALL_BASE + (level-1)*WALL_STEP, WALL_BASE, WALL_MAX); }
+function poseDifficulty(level){ return clamp((level-1)/(MAX_LEVEL-1), 0, 1); }
+
+/* 5.3 pickPose — deterministic wall selection. index 0 is always the easy symmetric ARMS_UP;
+   T-pose is never returned (not in POSE_LIBRARY); the pool grows with level. */
+function pickPose(index, level){
+  if(index===0){ for(var i=0;i<POSE_LIBRARY.length;i++){ if(POSE_LIBRARY[i].id==='ARMS_UP') return POSE_LIBRARY[i]; } }
+  var pool=POSE_LIBRARY.filter(function(p){ return p.tier<=maxTierForLevel(level); });
+  return pool[(index*7 + 3*level) % pool.length];
+}
+
+/* ================================ 6. pose library ============================
+   8 scored poses (T-pose excluded). Each: { id, name, tier, lm, target }; target derived at load.
+   lm is a 33-pt fixture (mkBody). Non-STAR legs are marked low-visibility so they aren't scored
+   (Manager Decision #3 — upper-body/torso core; only STAR authors legs). Coordinates tuned so
+   every pose self-matches ≈ 1.0 and clearly-different poses score < 0.5 (Manager Decision #2);
+   LEAN_LEFT ≠ LEAN_RIGHT (Manager Decision #5, directional). */
+function mkBody(spec){
+  var lm=[]; for(var i=0;i<33;i++) lm[i]={x:0.5,y:0.5,visibility:1};
+  for(var k in spec){ var s=spec[k]; lm[k]={ x:s[0], y:s[1], visibility:(s.length>2?s[2]:1) }; }
+  return lm;
+}
+/* neutral standing base — legs present but low-vis (0.2 < VIS_MIN) so they're not scored by default. */
+var NEUTRAL_SPEC = {
+  0:[0.50,0.18],
+  11:[0.42,0.30], 12:[0.58,0.30],
+  13:[0.40,0.42], 14:[0.60,0.42],
+  15:[0.40,0.54], 16:[0.60,0.54],
+  23:[0.45,0.55], 24:[0.55,0.55],
+  25:[0.45,0.72,0.2], 26:[0.55,0.72,0.2], 27:[0.45,0.88,0.2], 28:[0.55,0.88,0.2]
+};
+function poseSpec(ov){ var s={}; for(var k in NEUTRAL_SPEC) s[k]=NEUTRAL_SPEC[k]; for(var k2 in ov) s[k2]=ov[k2]; return s; }
+var POSE_DEFS = [
+  ['ARMS_UP','ARMS UP',1,{ 13:[0.42,0.18], 15:[0.42,0.06], 14:[0.58,0.18], 16:[0.58,0.06] }],
+  ['STAR','STAR',1,{ 13:[0.34,0.22], 15:[0.26,0.14], 14:[0.66,0.22], 16:[0.74,0.14],
+      25:[0.38,0.72,1], 27:[0.32,0.88,1], 26:[0.62,0.72,1], 28:[0.68,0.88,1] }],
+  ['LEFT_UP_RIGHT_DOWN','LEFT UP',2,{ 13:[0.42,0.18], 15:[0.42,0.06], 14:[0.60,0.42], 16:[0.60,0.54] }],
+  ['ONE_ARM_OUT','ARM OUT',2,{ 13:[0.40,0.42], 15:[0.40,0.54], 14:[0.70,0.30], 16:[0.82,0.30] }],
+  ['ARMS_CROSSED','CROSSED',2,{ 13:[0.38,0.40], 15:[0.58,0.40], 14:[0.62,0.40], 16:[0.42,0.40] }],
+  ['LEAN_LEFT','LEAN LEFT',2,{ 11:[0.36,0.32], 12:[0.52,0.30], 13:[0.28,0.38], 15:[0.18,0.42], 14:[0.44,0.38], 16:[0.34,0.42] }],
+  ['LEAN_RIGHT','LEAN RIGHT',2,{ 11:[0.48,0.30], 12:[0.64,0.32], 13:[0.56,0.38], 15:[0.66,0.42], 14:[0.72,0.38], 16:[0.82,0.42] }],
+  ['HANDS_ON_HIPS','HIPS',3,{ 13:[0.28,0.36], 15:[0.44,0.55], 14:[0.72,0.36], 16:[0.56,0.55] }]
+];
+var POSE_LIBRARY = POSE_DEFS.map(function(d){
+  var lm=mkBody(poseSpec(d[3]));
+  return { id:d[0], name:d[1], tier:d[2], lm:lm, target:poseTarget(lm) };
+});
+function poseById(id){ for(var i=0;i<POSE_LIBRARY.length;i++){ if(POSE_LIBRARY[i].id===id) return POSE_LIBRARY[i]; } return null; }
+
+/* ================================ 10. game state G =========================== */
+var G={
+  screen:'lobby',            // 'lobby' | 'play' | 'over'
+  control:'keyboard',        // 'camera' | 'keyboard'
+  running:false,
+
+  lives:LIVES_START,
+  score:0,                   // walls cleared (== final score)
+  streak:0,
+  peakStreak:0,              // this run's max streak (shown on the over screen)
+  best:0, bestStreak:0, newBest:false,   // persisted to localStorage
+  outcome:null,              // 'win' | 'over' | null
+
+  walls:[],                  // [{ index, targetId, target, dist, state }]
+  wallIndex:0,
+  currentTarget:null,
+  nextTarget:null,           // next wall's poseTarget (HUD preview)
+  nextPose:null,             // next wall's full library entry (id/name/lm) for the icon
+  matchScore:0,
+
+  calibration:{ neutralAngles:null, done:false },
+
+  // keyboard fallback
+  selectedPoseIndex:0,
+  committedPoseId:null,
+  kbLm:null,
+
+  // camera / pose runtime
+  cam:{ on:false, video:null, pose:null, stream:null, sending:false,
+        poseSeen:false, seen:false, lm:null, smoothed:null, tpose:false, tHold:0 },
+
+  _last:0
+};
+
+/* ================================ tiny WebAudio sfx =========================== */
+var actx=null, muted=false;
+function audioOn(){ try{ if(!actx && (typeof window!=='undefined') && (window.AudioContext||window.webkitAudioContext))
+  actx=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){}
+  try{ if(actx&&actx.state==='suspended') actx.resume(); }catch(e){} }
+function blip(f,dur,type,v){ if(muted||!actx) return; try{ var t=actx.currentTime,o=actx.createOscillator(),g=actx.createGain();
+  o.type=type||'sine'; o.frequency.setValueAtTime(f,t); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(v||0.1,t+0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001,t+(dur||0.12)); o.connect(g).connect(actx.destination); o.start(t); o.stop(t+(dur||0.12)+0.02); }catch(e){} }
+function sfx(n){ if(n==='pass'){ blip(880,0.08,'triangle',0.07); setTimeout(function(){ blip(1200,0.08,'triangle',0.06); },70); }
+  else if(n==='miss'){ blip(140,0.4,'sawtooth',0.12); }
+  else if(n==='win'){ [660,880,1047,1319].forEach(function(f,i){ setTimeout(function(){ blip(f,0.14,'triangle',0.08); },i*100); }); }
+  else if(n==='over'){ blip(180,0.4,'sawtooth',0.12); setTimeout(function(){ blip(110,0.5,'sawtooth',0.10); },120); }
+  else if(n==='select'){ blip(520,0.05,'square',0.05); } }
+
+/* ================================ camera / pose ============================== */
+function camMsg(t){ var e=$('camMsg'); if(e) e.textContent=t||''; }
+function showCamPip(on){ var w=$('camWrap'); if(w&&w.classList) w.classList.toggle('hidden',!on); }
+function loadScript(src,timeout){ timeout=timeout||15000; return new Promise(function(res,rej){
+  var s=document.createElement('script'); s.src=src; s.crossOrigin='anonymous';
+  var to=setTimeout(function(){ rej(new Error('timeout')); },timeout);
+  s.onload=function(){ clearTimeout(to); res(); }; s.onerror=function(){ clearTimeout(to); rej(new Error('load failed')); };
+  document.head.appendChild(s); }); }
+
+function pumpCamera(){ var c=G.cam; if(!c.on||!c.pose||c.sending||G.control!=='camera') return;
+  var v=c.video; if(!v||v.readyState<2) return;
+  c.sending=true; try{ c.pose.send({image:v}).catch(function(){}).finally(function(){ c.sending=false; }); }
+  catch(e){ c.sending=false; } }
+
+function teardownCamera(){ var c=G.cam; showCamPip(false); if(!c.on && !c.stream) return;
+  try{ if(c.stream) c.stream.getTracks().forEach(function(t){ t.stop(); }); }catch(e){}
+  c.stream=null; try{ if(c.pose&&c.pose.close) c.pose.close(); }catch(e){}
+  c.pose=null; if(c.video) c.video.srcObject=null; c.on=false; c.seen=false; c.poseSeen=false; }
+
+/* Smoke-safe warm-up: break the instant a pose is seen (the stub fires onResults synchronously
+   on the first send) — BEFORE any await-on-requestAnimationFrame. Mirrors Sky Dash. */
+function warmUp(){ var c=G.cam; return (async function(){
+  var v=c.video;
+  for(var i=0;i<150 && !c.poseSeen;i++){
+    if(v && v.readyState>=2){ try{ await c.pose.send({image:v}); }catch(e){} }
+    if(c.poseSeen) break;
+    await new Promise(function(r){ requestAnimationFrame(r); });
+  }
+})(); }
+
+var camBooting=false;
+async function startCameraFlow(){
+  if(camBooting) return; audioOn(); G.control='camera';
+  if(G.cam.on){ showCamPip(true); return; }
+  camBooting=true; camMsg('Starting camera…');
+  try{
+    if(typeof window.Pose==='undefined') await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js');
+    if(typeof window.Pose==='undefined') throw new Error('lib');
+    var stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false});
+    G.cam.stream=stream;
+    var v=G.cam.video; if(v){ v.srcObject=stream; try{ await v.play(); }catch(e){} }
+    var pose=new window.Pose({locateFile:function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/pose/'+f; }});
+    pose.setOptions({modelComplexity:1,smoothLandmarks:true,enableSegmentation:false,minDetectionConfidence:0.5,minTrackingConfidence:0.5});
+    pose.onResults(onPoseResults);
+    G.cam.pose=pose;
+    await warmUp();
+    G.cam.on=true; showCamPip(true); camMsg('');
+  }catch(err){ camFallback(err); }
+  finally{ camBooting=false; }
+}
+function camFallback(err){
+  G.cam.on=false;
+  try{ if(G.cam.stream) G.cam.stream.getTracks().forEach(function(t){ t.stop(); }); }catch(e){}
+  G.cam.stream=null; if(G.cam.video) G.cam.video.srcObject=null; showCamPip(false);
+  var n=err&&err.name;
+  camMsg(n==='NotAllowedError' ? 'Camera blocked — allow it, or press Play (keyboard).'
+       : n==='NotFoundError'  ? 'No camera found — press Play (keyboard).'
+       :                        "Couldn't start camera tracking — press Play (keyboard).");
+  G.control='keyboard';
+}
+
+/* Pose callback — smooth landmark POSITIONS (avoids angle-wrap artifacts), set the T-pose flag. */
+function onPoseResults(res){
+  var cam=G.cam; cam.poseSeen=true;
+  var lm=res&&res.poseLandmarks; cam.lm=lm||null;
+  if(!lm){ cam.seen=false; return; }
+  cam.tpose=isTpose(lm);
+  if(!(visOK(lm,11)&&visOK(lm,12)&&visOK(lm,15)&&visOK(lm,16))){ cam.seen=false; return; }
+  cam.seen=true;
+  if(!cam.smoothed || cam.smoothed.length!==lm.length){
+    cam.smoothed=lm.map(function(p){ return p?{x:p.x,y:p.y,visibility:p.visibility}:{x:0.5,y:0.5,visibility:0}; });
+  } else {
+    for(var i=0;i<lm.length;i++){ var p=lm[i], s=cam.smoothed[i]; if(!p||!s) continue;
+      s.x=lerp(s.x,p.x,POSE_EMA); s.y=lerp(s.y,p.y,POSE_EMA); s.visibility=p.visibility; }
+  }
+}
+
+/* ================================ 7. keyboard fallback ======================= */
+function commitPose(idx){
+  if(idx==null||idx<0||idx>=POSE_LIBRARY.length) return;
+  G.selectedPoseIndex=idx;
+  G.committedPoseId=POSE_LIBRARY[idx].id;
+  G.kbLm=POSE_LIBRARY[idx].lm;
+  sfx('select');
+}
+
+/* ================================ 9. game rules ============================== */
+function currentSourceLm(){
+  if(G.control==='camera') return (G.cam.seen ? G.cam.smoothed : null);
+  return G.kbLm;   // keyboard: committed pose's landmark fixture (or null before first commit)
+}
+function updateMatch(){
+  var wall=G.walls[0];
+  if(!wall||!wall.target){ G.matchScore=lerp(G.matchScore,0,MATCH_EMA); return; }
+  var src=currentSourceLm();
+  var raw=src ? poseMatchScore(src, wall.target) : 0;
+  G.matchScore=lerp(G.matchScore, raw, MATCH_EMA);
+}
+
+function startWithScheme(s){ audioOn(); if(s!=='camera' && G.cam.on) teardownCamera(); G.control=s; startGame(); }
+
+function startGame(){
+  G.screen='play'; G.running=true; G.outcome=null; G.newBest=false;
+  G.lives=LIVES_START; G.score=0; G.streak=0; G.peakStreak=0; G.matchScore=0;
+  G.selectedPoseIndex=0; G.committedPoseId=null; G.kbLm=null;
+  // calibration (SPEC §5.4): in camera mode capture the current resting pose; matching itself
+  // does not depend on it. Mark done so the first wall may resolve.
+  if(G.control==='camera' && G.cam.seen && G.cam.smoothed){ G.calibration.neutralAngles=poseTarget(G.cam.smoothed).limbs; }
+  else { G.calibration.neutralAngles=null; }
+  G.calibration.done=true;
+  G.cam.tHold=0;
+  // spawn wall 0 (always ARMS_UP) + prime the next-pose preview
+  G.wallIndex=0;
+  var first=pickPose(0, 1);
+  G.walls=[{ index:0, targetId:first.id, target:first.target, dist:SPAWN_DIST, state:'approach' }];
+  G.currentTarget=first.target;
+  var nx=pickPose(1, 1);
+  G.nextPose=nx; G.nextTarget=nx.target;
+  showScreen('play'); updateNextPoseUI(); updateHud();
+}
+
+function spawnNextWall(){
+  G.wallIndex++;
+  var level=levelForScore(G.score);
+  var pose=G.nextPose || pickPose(G.wallIndex, level);   // becomes active = what the preview showed
+  G.walls=[{ index:G.wallIndex, targetId:pose.id, target:pose.target, dist:SPAWN_DIST, state:'approach' }];
+  G.currentTarget=pose.target;
+  G.matchScore=0;
+  var nx=pickPose(G.wallIndex+1, level);
+  G.nextPose=nx; G.nextTarget=nx.target;
+  updateNextPoseUI();
+}
+
+function resolveWall(wall){
+  if(passesWall(G.matchScore)){
+    wall.state='passed'; G.score++; G.streak++;
+    if(G.streak>G.peakStreak) G.peakStreak=G.streak;
+    sfx('pass'); popStreak();
+    if(G.score>=WIN_WALLS){ return endRun('win'); }
+  } else {
+    wall.state='missed'; G.lives--; G.streak=0;
+    sfx('miss'); flashLifeLost();
+    if(G.lives<=0){ return endRun('over'); }
+  }
+  spawnNextWall();
+}
+
+function stepPlay(dt){
+  if(!G.running) return;
+  updateMatch();
+  var wall=G.walls[0];
+  if(wall && wall.state==='approach'){
+    wall.dist -= wallSpeed(levelForScore(G.score))*dt;
+    if(wall.dist<=0){ wall.dist=0; resolveWall(wall); }
+  }
+  updateHud();
+}
+
+function endRun(outcome){
+  if(G.screen==='over') return;
+  G.outcome=outcome; G.running=false; G.screen='over';
+  // final score = walls cleared (SPEC §9); persist best score + best streak (localStorage only)
+  if(G.score>G.best){ G.best=G.score; G.newBest=true; try{ localStorage.setItem('posewall_best',String(G.best)); }catch(e){} }
+  if(G.peakStreak>G.bestStreak){ G.bestStreak=G.peakStreak; }
+  try{ localStorage.setItem('posewall_beststreak',String(G.bestStreak)); }catch(e){}
+  sfx(outcome==='win'?'win':'over');
+  updateOverUI();
+}
+
+/* ================================ HUD / screens ============================== */
+function show(id,on){ var e=$(id); if(e&&e.classList) e.classList.toggle('hidden',!on); }
+function showScreen(name){
+  show('lobbyScreen', name==='lobby');
+  show('overScreen', name==='over');
+  show('hud', name==='play');
+  show('matchMeter', name==='play');
+  show('nextPosePanel', name==='play');
+}
+function renderLives(){
+  var lost=Math.max(0, LIVES_START-G.lives), s='';
+  for(var i=0;i<G.lives;i++) s+='<span style="color:var(--bad)">&#9829;</span>';
+  for(var j=0;j<lost;j++)   s+='<span style="color:var(--ink);opacity:.28">&#9829;</span>';
+  var e=$('livesV'); if(e) e.innerHTML=s;
+}
+function popStreak(){ var e=$('streakV'); if(e&&e.classList){ e.classList.remove('pop'); void (e.offsetWidth||0); e.classList.add('pop'); } }
+function flashLifeLost(){ var e=$('livesV'); if(e&&e.classList){ e.classList.remove('hit'); void (e.offsetWidth||0); e.classList.add('hit');
+  setTimeout(function(){ if(e.classList) e.classList.remove('hit'); },460); } }
+function updateHud(){
+  var s=$('scoreV'); if(s) s.textContent=String(G.score);
+  renderLives();
+  var st=$('streakV'); if(st) st.textContent=String(G.streak);
+  var pct=Math.round(clamp(G.matchScore,0,1)*100);
+  var mf=$('matchFill'); if(mf&&mf.style) mf.style.width=pct+'%';
+  var mp=$('matchPct'); if(mp) mp.textContent=pct+'%';
+  var mm=$('matchMeter'); if(mm&&mm.classList) mm.classList.toggle('pass', G.matchScore>=PASS_THRESHOLD);
+}
+function updateOverUI(){
+  var a=$('overTitleA'), b=$('overTitleB'), mood=$('overMood');
+  if(G.outcome==='win'){
+    if(a){ a.textContent='YOU'; a.style.color='var(--good)'; }
+    if(b){ b.textContent='WIN!'; b.style.color='var(--warn)'; }
+    if(mood) mood.textContent='🏆 You cleared all '+WIN_WALLS+' walls!';
+  } else {
+    if(a){ a.textContent='GAME'; a.style.color='var(--bad)'; }
+    if(b){ b.textContent='OVER'; b.style.color='var(--ink)'; }
+    if(mood) mood.textContent='💥 Out of lives — '+G.score+' walls cleared.';
+  }
+  var os=$('overScore'); if(os) os.textContent=String(G.score);
+  var ost=$('overStreak'); if(ost) ost.textContent=String(G.peakStreak);
+  var ob=$('overBest'); if(ob) ob.textContent=String(G.best);
+  var nb=$('newBest'); if(nb&&nb.classList) nb.classList.toggle('hidden',!G.newBest);
+  showScreen('over');
+}
+
+/* ===================== 8. next-pose mini-icon (Engine, canvas-2D) ============ */
+function updateNextPoseUI(){
+  var nm=$('nextPoseName'); if(nm) nm.textContent = G.nextPose ? G.nextPose.name : '—';
+  try{ drawNextPose(); }catch(e){}
+}
+function drawNextPose(){
+  var cv=$('nextPose'); if(!cv||!cv.getContext) return;
+  var gx=cv.getContext('2d'); if(!gx) return;
+  var box=cv.width||48, boxH=cv.height||48, p=6;
+  gx.clearRect(0,0,box,boxH);
+  var pose=G.nextPose; if(!pose||!pose.lm) return;
+  var lm=pose.lm, hasLegs=!!(pose.target&&pose.target.hasLegs);
+  var joints=[0,11,12,13,14,15,16,23,24]; if(hasLegs) joints=joints.concat([25,26,27,28]);
+  var minx=1e9,maxx=-1e9,miny=1e9,maxy=-1e9;
+  joints.forEach(function(i){ var q=lm[i]; if(!q) return;
+    if(q.x<minx)minx=q.x; if(q.x>maxx)maxx=q.x; if(q.y<miny)miny=q.y; if(q.y>maxy)maxy=q.y; });
+  var span=Math.max(1e-6, Math.max(maxx-minx, maxy-miny));
+  var scale=(box-2*p)/span;
+  var ox=(box-2*p-(maxx-minx)*scale)/2, oy=(boxH-2*p-(maxy-miny)*scale)/2;
+  var sx=function(i){ return (box-p) - ((lm[i].x-minx)*scale) - ox; };   // MIRROR horizontally
+  var sy=function(i){ return p + oy + (lm[i].y-miny)*scale; };
+  var mpt=function(i,j,ax){ var v=(lm[i][ax]+lm[j][ax])/2; return ax==='x' ? ((box-p)-((v-minx)*scale)-ox) : (p+oy+(v-miny)*scale); };
+  var stroke = pose.tier>=3 ? '#ffd23f' : '#3ef0a0';
+  gx.strokeStyle=stroke; gx.lineWidth=3; gx.lineCap='round'; gx.beginPath();
+  var bones=[[11,13],[13,15],[12,14],[14,16],[11,12]];
+  bones.forEach(function(b){ if(lm[b[0]]&&lm[b[1]]){ gx.moveTo(sx(b[0]),sy(b[0])); gx.lineTo(sx(b[1]),sy(b[1])); } });
+  gx.moveTo(mpt(23,24,'x'),mpt(23,24,'y')); gx.lineTo(mpt(11,12,'x'),mpt(11,12,'y'));   // torso
+  if(hasLegs){ [[23,25],[25,27],[24,26],[26,28]].forEach(function(b){ if(lm[b[0]]&&lm[b[1]]){ gx.moveTo(sx(b[0]),sy(b[0])); gx.lineTo(sx(b[1]),sy(b[1])); } }); }
+  gx.stroke();
+  gx.beginPath(); gx.arc(sx(0),sy(0),5,0,7); gx.stroke();                                 // head
+  gx.fillStyle='#ffd23f';
+  [11,12,13,14,15,16,23,24].forEach(function(i){ gx.beginPath(); gx.arc(sx(i),sy(i),2.5,0,7); gx.fill(); });
+}
+
+/* ============================ webcam skeleton overlay (SPEC §8 / DESIGN_SPEC §7) ============= */
+var CON=[[11,12],[11,23],[12,24],[23,24],[11,13],[13,15],[12,14],[14,16],
+  [23,25],[25,27],[24,26],[26,28],[27,29],[29,31],[28,30],[30,32],[27,31],[28,32],
+  [15,17],[15,19],[15,21],[16,18],[16,20],[16,22],[0,11],[0,12]];
+function roundRect(gx,x,y,w,h,r){ gx.beginPath(); gx.moveTo(x+r,y); gx.arcTo(x+w,y,x+w,y+h,r); gx.arcTo(x+w,y+h,x,y+h,r); gx.arcTo(x,y+h,x,y,r); gx.arcTo(x,y,x+w,y,r); gx.closePath(); }
+function overlayStatus(){
+  if(G.screen==='lobby') return G.cam.tpose?'hold the T… locking on':'🧍 T-pose to begin';
+  if(G.screen==='over')  return G.cam.tpose?'hold the T… restarting':'🧍 T-pose to play again';
+  return G.cam.seen?'match the shape':'stand back so your body shows';
+}
+function drawCamOverlay(){
+  var cv=$('camOverlay'); if(!cv||!cv.getContext) return;
+  var gx=cv.getContext('2d'); if(!gx) return;
+  var w=cv.width||132, h=cv.height||99, x=0, y=0;
+  gx.clearRect(x,y,w,h);
+  var lm=G.cam.lm;
+  if(G.screen==='lobby' || G.screen==='over'){
+    var pr=clamp(G.cam.tHold/GESTURE_HOLD,0,1);
+    if(pr>0){ var cx=x+w/2, cy=y+h*0.42, r=26;
+      gx.lineWidth=6; gx.strokeStyle='rgba(255,255,255,0.18)'; gx.beginPath(); gx.arc(cx,cy,r,0,7); gx.stroke();
+      gx.strokeStyle='#ffd23f'; gx.beginPath(); gx.arc(cx,cy,r,-Math.PI/2,-Math.PI/2+pr*Math.PI*2,false); gx.stroke(); }
+  }
+  if(lm){
+    var px=function(i){ return x+(1-lm[i].x)*w; }, py=function(i){ return y+lm[i].y*h; };   // mirror (body-dash-2d.html:707)
+    var tp=(G.screen==='lobby'||G.screen==='over')&&G.cam.tpose;
+    gx.lineWidth=4; gx.lineCap='round'; gx.strokeStyle=tp?'#3ef0a0':'#5ee0ff'; gx.beginPath();
+    CON.forEach(function(pair){ var a=pair[0], b=pair[1]; if(lm[a]&&lm[b]){ gx.moveTo(px(a),py(a)); gx.lineTo(px(b),py(b)); } });
+    gx.stroke();
+    gx.fillStyle='#ffd23f';
+    [0,11,12,13,14,15,16,23,24,25,26,27,28].forEach(function(i){ if(lm[i]&&(lm[i].visibility===undefined||lm[i].visibility>=VIS_MIN)){ gx.beginPath(); gx.arc(px(i),py(i),4,0,7); gx.fill(); } });
+  }
+  var status=overlayStatus();
+  gx.fillStyle='rgba(0,0,0,0.6)'; gx.fillRect(x,y+h-22,w,22);
+  gx.font='700 11px Trebuchet MS'; gx.textAlign='center';
+  gx.fillStyle=(status.indexOf('T-pose')>=0||status.indexOf('stand back')>=0)?'#ffd23f':'#9fe8c9';
+  gx.fillText(status,x+w/2,y+h-7);
+  gx.strokeStyle='rgba(94,224,255,0.75)'; gx.lineWidth=3; roundRect(gx,x,y,w,h,12); gx.stroke();
+}
+
+/* ================================ RAF loop =================================== */
+function update(ts){
+  if(ts==null) ts=(G._last||0)+16;
+  var dt=Math.min(0.05,(G._last?ts-G._last:16)/1000); G._last=ts; var t=ts/1000;
+  pumpCamera();
+  // T-pose start / restart in lobby & over (camera mode)
+  if((G.screen==='lobby'||G.screen==='over') && G.control==='camera' && G.cam.on){
+    if(G.cam.tpose) G.cam.tHold+=dt; else G.cam.tHold=Math.max(0,G.cam.tHold-dt*2);
+    if(G.cam.tHold>=GESTURE_HOLD){ G.cam.tHold=0; startGame(); }
+  }
+  if(G.screen==='play') stepPlay(dt);
+  if(G.cam.on){ try{ drawCamOverlay(); }catch(e){} }
+  if(typeof window!=='undefined' && typeof window.__pwRender==='function'){ try{ window.__pwRender(dt,t); }catch(e){} }
+  if(typeof requestAnimationFrame!=='undefined') requestAnimationFrame(update);
+}
+
+/* ================================ keyboard =================================== */
+function wire(id,ev,fn){ var e=$(id); if(e&&e.addEventListener) e.addEventListener(ev,fn); }
+function initInput(){
+  if(typeof window==='undefined' || !window.addEventListener) return;
+  window.addEventListener('keydown',function(e){
+    if(document.activeElement && document.activeElement.tagName==='INPUT') return;
+    var k=e.key;
+    if(G.screen==='lobby' && !camBooting){ if(k===' '||k==='Enter'){ e.preventDefault(); startWithScheme('keyboard'); } return; }
+    if(G.screen==='over'){ if(k===' '||k==='Enter'){ e.preventDefault(); startGame(); } return; }
+    if(G.screen!=='play') return;
+    if(k>='1' && k<='8'){ commitPose(parseInt(k,10)-1); e.preventDefault(); }
+    else if(k===' '||k==='Enter'){ commitPose(G.selectedPoseIndex); e.preventDefault(); }
+  });
+}
+
+/* ================================ boot ======================================= */
+function initDom(){
+  G.cam.video=$('cam');
+  try{ G.best=parseInt((localStorage.getItem('posewall_best')||'0'),10)||0; }catch(e){ G.best=0; }
+  try{ G.bestStreak=parseInt((localStorage.getItem('posewall_beststreak')||'0'),10)||0; }catch(e){ G.bestStreak=0; }
+  wire('playKeysBtn','click',function(){ startWithScheme('keyboard'); });
+  wire('playCamBtn','click',function(){ startCameraFlow(); });
+  wire('againBtn','click',function(){ startGame(); });
+  wire('howToBtn','click',function(){ var hw=$('howto'); if(hw&&hw.classList) hw.classList.toggle('hidden'); });
+  initInput();
+  showScreen('lobby');
+}
+initDom();
+if(typeof requestAnimationFrame!=='undefined') requestAnimationFrame(update);
+
+/* ============================ test exposer (SPEC §3.4) ====================== */
+;try{ globalThis.__pw = { G:G, normalizePose:normalizePose, limbAngle:limbAngle, angleDiff:angleDiff,
+  limbSimilarity:limbSimilarity, poseTarget:poseTarget, poseMatchScore:poseMatchScore, passesWall:passesWall,
+  isTpose:isTpose, levelForScore:levelForScore, maxTierForLevel:maxTierForLevel, wallSpeed:wallSpeed,
+  poseDifficulty:poseDifficulty, pickPose:pickPose, POSE_LIBRARY:POSE_LIBRARY, startGame:startGame,
+  startWithScheme:startWithScheme, commitPose:commitPose, onPoseResults:onPoseResults, update:update }; }catch(e){}
+</script>
+</body>
+</html>
