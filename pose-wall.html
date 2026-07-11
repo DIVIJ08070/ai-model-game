@@ -59,6 +59,25 @@
   #nextPose{ width:48px; height:48px; display:block; }
   #nextPoseName{ font-size:10px; font-weight:800; color:var(--good); letter-spacing:0.4px; max-width:76px; text-align:center; line-height:1.1; }
 
+  /* ---- [NEW] first-time tutorial — left side coaching panel (non-blocking; you still see the 3D wall) ---- */
+  #tutPanel{ position:absolute; top:50%; left:12px; transform:translateY(-50%); z-index:12; width:min(272px,78vw);
+    background:rgba(16,21,43,0.93); border:3px solid rgba(155,107,255,0.55); border-radius:18px; padding:15px 15px 13px;
+    box-shadow:0 12px 34px rgba(0,0,0,0.55); display:flex; flex-direction:column; align-items:center; gap:7px; text-align:center; }
+  #tutStepK{ font-size:11px; letter-spacing:1.5px; text-transform:uppercase; font-weight:800; color:var(--lane); opacity:0.9; }
+  #tutPoseName{ font-size:22px; font-weight:900; color:var(--good); letter-spacing:0.5px; line-height:1; }
+  #tutPose{ width:128px; height:128px; display:block; background:rgba(0,0,0,0.3); border-radius:14px;
+    border:2px solid rgba(94,224,255,0.28); }
+  #tutTip{ font-size:12.5px; line-height:1.4; opacity:0.9; }
+  #tutPrompt{ font-size:15px; font-weight:900; color:var(--warn); min-height:20px; }
+  #tutPrompt.ok{ color:var(--good); }
+  #tutKbHint{ font-size:11.5px; color:var(--lane); opacity:0.55; line-height:1.3; }
+  #tutKbHint.show{ opacity:1; font-weight:800; }
+  #tutSkip{ margin-top:3px; font-size:14px; padding:9px 12px; width:auto; }
+  #tutReadyScreen .ctarow .btn{ font-size:17px; }
+  @media (max-width:600px){ #tutPanel{ width:min(210px,64vw); padding:11px; gap:5px; } #tutPose{ width:96px; height:96px; }
+    #tutPoseName{ font-size:18px; } #tutTip{ font-size:11px; } }
+  @media (prefers-reduced-motion: reduce){ #tutPanel{ box-shadow:0 12px 34px rgba(0,0,0,0.55); } }
+
   /* ---- [ARCADE] webcam panel (DESIGN_SPEC §7) — enlarged, neon-bordered "YOU" PIP ---- */
   #camWrap{ position:absolute; right:14px; bottom:14px; z-index:9; width:196px; height:147px; border-radius:16px; overflow:hidden;
     border:3px solid rgba(94,224,255,0.9); box-shadow:0 0 22px rgba(94,224,255,0.5), 0 8px 22px rgba(0,0,0,0.55); background:#05070f;
@@ -157,6 +176,30 @@
     <div id="nextPoseName">&mdash;</div>
   </div>
 
+  <!-- [NEW] first-time tutorial side panel (visible only during the TUTORIAL state) -->
+  <div id="tutPanel" class="hidden" aria-live="polite">
+    <div id="tutStepK">Step 1 of 3</div>
+    <div id="tutPoseName">&mdash;</div>
+    <canvas id="tutPose" width="128" height="128" aria-hidden="true"></canvas>
+    <div id="tutTip">A wall with your shape is rushing in. Strike the pose to fit through the hole!</div>
+    <div id="tutPrompt">Get ready&hellip;</div>
+    <div id="tutKbHint">Keyboard: press the pose number, then Enter to lock.</div>
+    <button class="btn ghost" id="tutSkip">Skip tutorial</button>
+  </div>
+
+  <!-- [NEW] tutorial complete screen -->
+  <div class="screen hidden" id="tutReadyScreen">
+    <div class="card">
+      <h1 class="title"><span class="a" style="color:var(--good)">YOU'RE</span><span class="b" style="color:var(--warn)">READY!</span></h1>
+      <div class="sub">You&rsquo;ve got it &mdash; read the incoming shape, strike the pose, and fit through the hole
+        before the wall hits. Miss and you lose a life. Clear 20 walls to win.</div>
+      <div class="ctarow">
+        <button class="btn" id="tutStartBtn">&#9654; Start Game</button>
+        <button class="btn ghost" id="tutReadySkipBtn">Skip</button>
+      </div>
+    </div>
+  </div>
+
   <!-- LOBBY (DESIGN_SPEC §3.1) -->
   <div class="screen" id="lobbyScreen">
     <div class="card">
@@ -164,7 +207,10 @@
       <div class="sub">A wall with your shape cut out is rushing at you. <b>Strike the pose</b> to
         fit through the hole before it hits &mdash; pass to score, miss to lose a life.</div>
       <button class="btn" id="playKeysBtn">&#9654; Play (keyboard)</button>
-      <div class="ctarow"><button class="btn ghost" id="playCamBtn">&#128247; Camera</button></div>
+      <div class="ctarow">
+        <button class="btn ghost" id="playCamBtn">&#128247; Camera</button>
+        <button class="btn ghost" id="tutorialBtn">&#127891; Tutorial</button>
+      </div>
       <div id="camMsg" class="sub" style="text-align:center;color:var(--warn);min-height:1px;margin:10px 0 0"></div>
       <div class="sub" style="margin:12px 0 0">&#129485; <b>T-pose to begin</b> &mdash; arms straight out.
         Then <b>hold still a moment</b> while we lock onto you.</div>
@@ -544,7 +590,8 @@ try{
   function poseById(id){ if(!POSE_LIBRARY) return null; for(let i=0;i<POSE_LIBRARY.length;i++){ if(POSE_LIBRARY[i].id===id) return POSE_LIBRARY[i]; } return null; }
 
   /* =============================== the render hook the Engine calls every frame =============================== */
-  let prevScore=0, prevLives=3, prevScreen='', _t=0;
+  let prevScore=0, prevLives=3, prevScreen='', _t=0, prevFxId=0;
+  const isGameplay = s => (s==='play' || s==='tutorial');   // [NEW] tutorial reuses the same wall/avatar visuals
   window.__pwRender = function(dt,t){
     try{
       dt = Math.min(dt||0.016, 0.05); _t=t;
@@ -552,8 +599,11 @@ try{
       if(PW.POSE_LIBRARY) POSE_LIBRARY = PW.POSE_LIBRARY;
       if(!G){ updateCamera(dt,t); renderer.render(scene,camera); return; }
 
+      // [NEW] explicit FX request from the Engine (tutorial step-clear, which doesn't change score/lives)
+      if(G.fxId && G.fxId!==prevFxId){ prevFxId=G.fxId; triggerFX(G.fxKind==='miss'?'miss':'pass'); }
+
       // resolution FX from Engine deltas (the resolved wall is replaced same-frame, so watch score/lives)
-      if(prevScreen!=='play' && G.screen==='play'){ prevScore=G.score; prevLives=G.lives; }
+      if(!isGameplay(prevScreen) && isGameplay(G.screen)){ prevScore=G.score; prevLives=G.lives; }
       if(G.score>prevScore) triggerFX('pass');
       if(G.lives<prevLives) triggerFX('miss');
       prevScore=G.score; prevLives=G.lives; prevScreen=G.screen;
@@ -561,7 +611,7 @@ try{
       // active wall + neon silhouette (the GOAL "hole": a wire outline that fills solid when you match)
       const matched = (G.matchScore||0) >= PASS;
       const w = (G.walls && G.walls[0]) ? G.walls[0] : null;
-      if(w && G.screen==='play'){
+      if(w && isGameplay(G.screen)){
         wall.visible=true;
         const near = 1 - clamp(w.dist/SPAWN_DIST, 0, 1);   // 0 far → 1 at the impact plane
         wall.position.set(0, FIG_CY, distToZ(w.dist));
@@ -832,6 +882,11 @@ var G={
   cam:{ on:false, video:null, pose:null, stream:null, sending:false,
         poseSeen:false, seen:false, lm:null, smoothed:null, tpose:false, tHold:0 },
 
+  // [NEW] first-time interactive tutorial (guided, no-fail, slow-mo)
+  tutorial:{ active:false, step:0, phase:'approach', phaseT:0, matchHold:0, struggle:0, slow:1 },
+  // [NEW] one-shot FX request the View consumes (used by the tutorial, which never touches score/lives)
+  fxId:0, fxKind:null,
+
   _last:0
 };
 
@@ -948,17 +1003,24 @@ function updateMatch(){
   G.matchScore=lerp(G.matchScore, raw, MATCH_EMA);
 }
 
-function startWithScheme(s){ audioOn(); if(s!=='camera' && G.cam.on) teardownCamera(); G.control=s; startGame(); }
+/* [NEW] from-lobby entry gate: first-time players get the tutorial, returning players play. */
+function startFlow(){ if(!tutDone()) startTutorial(); else startGame(); }
+function startWithScheme(s){ audioOn(); if(s!=='camera' && G.cam.on) teardownCamera(); G.control=s; startFlow(); }
 
-function startGame(){
-  G.screen='play'; G.running=true; G.outcome=null; G.newBest=false;
-  G.lives=LIVES_START; G.score=0; G.streak=0; G.peakStreak=0; G.matchScore=0;
-  G.selectedPoseIndex=0; G.committedPoseId=null; G.kbLm=null;
-  // calibration (SPEC §5.4): in camera mode capture the current resting pose; matching itself
-  // does not depend on it. Mark done so the first wall may resolve.
+/* calibration (SPEC §5.4): in camera mode capture the current resting pose; matching itself
+   does not depend on it. Mark done so the first wall may resolve. Shared by play + tutorial. */
+function captureCalibration(){
   if(G.control==='camera' && G.cam.seen && G.cam.smoothed){ G.calibration.neutralAngles=poseTarget(G.cam.smoothed).limbs; }
   else { G.calibration.neutralAngles=null; }
   G.calibration.done=true;
+}
+
+function startGame(){
+  G.tutorial.active=false;
+  G.screen='play'; G.running=true; G.outcome=null; G.newBest=false;
+  G.lives=LIVES_START; G.score=0; G.streak=0; G.peakStreak=0; G.matchScore=0;
+  G.selectedPoseIndex=0; G.committedPoseId=null; G.kbLm=null;
+  captureCalibration();
   G.cam.tHold=0;
   // spawn wall 0 (always ARMS_UP) + prime the next-pose preview
   G.wallIndex=0;
@@ -1019,14 +1081,132 @@ function endRun(outcome){
   updateOverUI();
 }
 
+/* ============================ [NEW] first-time interactive tutorial ==========================
+   A guided, NO-FAIL, slow-mo demo that reuses the real scene + pose-match logic. On first load
+   (posewall_tut_done not set), after camera-enable + calibration the start gate routes here instead
+   of normal play. Each step: show a side panel (pose name + one-line tip + a diagram of the TARGET
+   pose), spawn ONE wall with that shape, let it approach, SLOW time as it nears, then WAIT until the
+   camera/keyboard match crosses the real PASS_THRESHOLD — the hole fills green, we cheer, the wall
+   passes, advance. No lives lost. A "Skip tutorial" button is always shown; finishing OR skipping
+   sets posewall_tut_done. */
+var TUTORIAL_STEPS = [
+  { id:'ARMS_UP',       tip:'A wall with your shape is rushing in — reach both arms straight up to fit through the hole!' },
+  { id:'ONE_ARM_OUT',   tip:'Shapes get trickier, and they’re directional. Copy this exact silhouette — right arm out.' },
+  { id:'HANDS_ON_HIPS',  tip:'No camera? Press the pose number, then Enter to lock it in. Match the shape to pass.' }
+];
+var TUT_APPROACH   = 14;    // units/sec the coaching wall drifts in (before slow-mo)
+var TUT_SLOWMO_DIST = 20;   // begin slow-mo once the wall is this near
+var TUT_HOLD_DIST  = 7;     // wall waits HERE for the player to strike the pose (no-fail)
+var TUT_SLOW       = 0.3;   // slow-mo time scale
+var TUT_MATCH_HOLD = 0.3;   // seconds a PASS must hold to clear a step
+var TUT_CLEARED_HOLD = 0.9; // "Nice — you fit!" beat before the next step
+var TUT_HINT_AFTER = 3.0;   // reveal the keyboard hint after this many seconds of struggle
+
+function tutDone(){ try{ return localStorage.getItem('posewall_tut_done')==='1'; }catch(e){ return false; } }
+function setTutDone(){ try{ localStorage.setItem('posewall_tut_done','1'); }catch(e){} }
+function requestFX(kind){ G.fxId=(G.fxId||0)+1; G.fxKind=kind; }   // View consumes this one-shot
+function libIndexOf(id){ for(var i=0;i<POSE_LIBRARY.length;i++){ if(POSE_LIBRARY[i].id===id) return i; } return 0; }
+
+function startTutorial(){
+  audioOn();
+  G.screen='tutorial'; G.running=true; G.outcome=null;
+  G.lives=LIVES_START; G.score=0; G.streak=0; G.peakStreak=0; G.matchScore=0;
+  G.selectedPoseIndex=0; G.committedPoseId=null; G.kbLm=null;
+  captureCalibration();
+  G.cam.tHold=0;
+  var T=G.tutorial;
+  T.active=true; T.step=0; T.phase='approach'; T.phaseT=0; T.matchHold=0; T.struggle=0; T.slow=1;
+  spawnTutorialWall(0);
+  if(G.control==='camera' && G.cam.on) showCamPip(true);
+  showScreen('tutorial');
+  show('tutReadyScreen', false);
+  updateTutorialPanel(); updateHud();
+}
+function spawnTutorialWall(i){
+  var def=TUTORIAL_STEPS[i]; if(!def) return;
+  var pose=poseById(def.id); if(!pose) return;
+  G.walls=[{ index:i, targetId:pose.id, target:pose.target, dist:SPAWN_DIST, state:'approach' }];
+  G.currentTarget=pose.target; G.matchScore=0;
+  G.nextPose=pose; G.nextTarget=pose.target;
+  G.tutorial.matchHold=0; G.tutorial.struggle=0; G.tutorial.phaseT=0;
+}
+function setTutPhase(p){ G.tutorial.phase=p; G.tutorial.phaseT=0; }
+function stepTutorial(dt){
+  var T=G.tutorial; if(!T.active) return;
+  T.phaseT+=dt;
+  updateMatch();                                    // reuse the real match meter vs G.walls[0].target
+  var wall=G.walls[0];
+  if(T.phase==='approach' && wall){
+    var slow=(wall.dist<=TUT_SLOWMO_DIST)?TUT_SLOW:1; T.slow=slow;
+    wall.dist -= TUT_APPROACH*dt*slow;
+    if(wall.dist<=TUT_HOLD_DIST){ wall.dist=TUT_HOLD_DIST; setTutPhase('wait'); }
+  } else if(T.phase==='wait' && wall){
+    T.slow=TUT_SLOW;                                // held near the player, waiting (no-fail)
+    if(passesWall(G.matchScore)){ T.matchHold+=dt; if(T.matchHold>=TUT_MATCH_HOLD) clearTutStep(); }
+    else { T.matchHold=0; T.struggle+=dt; }
+  } else if(T.phase==='cleared'){
+    T.slow=1;
+    if(T.phaseT>=TUT_CLEARED_HOLD) advanceTutStep();
+  }
+  updateHud();
+  updateTutorialPanel();
+}
+function clearTutStep(){
+  var wall=G.walls[0]; if(wall) wall.state='passed';
+  requestFX('pass'); sfx('pass');
+  G.walls=[];                                       // the wall passes / shatters
+  setTutPhase('cleared');
+}
+function advanceTutStep(){
+  var T=G.tutorial; T.step++;
+  if(T.step<TUTORIAL_STEPS.length){ spawnTutorialWall(T.step); setTutPhase('approach'); updateTutorialPanel(); }
+  else { tutorialReady(); }
+}
+function tutorialReady(){
+  setTutPhase('ready'); G.walls=[]; G.matchScore=0;
+  show('tutPanel', false); show('tutReadyScreen', true);
+}
+/* leave the tutorial back to the lobby (used by "Skip tutorial" + the ready-screen "Skip") */
+function endTutorial(){
+  G.tutorial.active=false; G.walls=[]; G.matchScore=0;
+  show('tutPanel', false); show('tutReadyScreen', false);
+  G.screen='lobby'; showScreen('lobby');
+}
+function skipTutorial(){ setTutDone(); endTutorial(); }
+function tutorialStartGame(){ setTutDone(); G.tutorial.active=false; show('tutReadyScreen', false); startGame(); }
+function replayTutorial(){ audioOn(); if(!G.cam.on) G.control='keyboard'; startTutorial(); }
+
+function updateTutorialPanel(){
+  var T=G.tutorial; if(!T.active) return;
+  var def=TUTORIAL_STEPS[T.step]; if(!def) return;   // 'ready' phase (step past the end) leaves the ready card up
+  var pose=poseById(def.id);
+  var k=$('tutStepK'); if(k) k.textContent='Step '+(T.step+1)+' of '+TUTORIAL_STEPS.length;
+  var nm=$('tutPoseName'); if(nm) nm.textContent=pose?pose.name:'';
+  var tip=$('tutTip'); if(tip) tip.textContent=def.tip;
+  var matched=passesWall(G.matchScore);
+  var pt = T.phase==='approach' ? 'Get ready…'
+         : T.phase==='wait'     ? (matched ? 'Nice — hold it!' : 'Strike the pose to fit!')
+         : T.phase==='cleared'  ? 'Nice — you fit! ✅' : '';
+  var pr=$('tutPrompt'); if(pr){ pr.textContent=pt; if(pr.classList) pr.classList.toggle('ok', matched || T.phase==='cleared'); }
+  var hint=$('tutKbHint');
+  if(hint){
+    hint.textContent='Keyboard: press '+(libIndexOf(def.id)+1)+', then Enter to lock';
+    var reveal = (G.control==='keyboard') || (T.phase==='wait' && T.struggle>=TUT_HINT_AFTER);
+    if(hint.classList) hint.classList.toggle('show', reveal);
+  }
+  try{ drawPoseIcon($('tutPose'), pose); }catch(e){}
+}
+
 /* ================================ HUD / screens ============================== */
 function show(id,on){ var e=$(id); if(e&&e.classList) e.classList.toggle('hidden',!on); }
 function showScreen(name){
   show('lobbyScreen', name==='lobby');
   show('overScreen', name==='over');
   show('hud', name==='play');
-  show('matchMeter', name==='play');
+  show('matchMeter', name==='play' || name==='tutorial');   // [NEW] tutorial shows the match meter too
   show('nextPosePanel', name==='play');
+  show('tutPanel', name==='tutorial');
+  if(name!=='tutorial') show('tutReadyScreen', false);      // any non-tutorial screen clears the ready card
 }
 function renderLives(){
   var lost=Math.max(0, LIVES_START-G.lives), s='';
@@ -1069,12 +1249,15 @@ function updateNextPoseUI(){
   var nm=$('nextPoseName'); if(nm) nm.textContent = G.nextPose ? G.nextPose.name : '—';
   try{ drawNextPose(); }catch(e){}
 }
-function drawNextPose(){
-  var cv=$('nextPose'); if(!cv||!cv.getContext) return;
+function drawNextPose(){ drawPoseIcon($('nextPose'), G.nextPose); }
+/* generic mirrored stick-figure diagram of a pose, auto-fit to any square canvas (reused by the
+   next-pose HUD chip AND the larger tutorial target diagram). */
+function drawPoseIcon(cv, pose){
+  if(!cv||!cv.getContext) return;
   var gx=cv.getContext('2d'); if(!gx) return;
-  var box=cv.width||48, boxH=cv.height||48, p=6;
+  var box=cv.width||48, boxH=cv.height||48, u=box/48, p=6*u;
   gx.clearRect(0,0,box,boxH);
-  var pose=G.nextPose; if(!pose||!pose.lm) return;
+  if(!pose||!pose.lm) return;
   var lm=pose.lm, hasLegs=!!(pose.target&&pose.target.hasLegs);
   var joints=[0,11,12,13,14,15,16,23,24]; if(hasLegs) joints=joints.concat([25,26,27,28]);
   var minx=1e9,maxx=-1e9,miny=1e9,maxy=-1e9;
@@ -1087,15 +1270,15 @@ function drawNextPose(){
   var sy=function(i){ return p + oy + (lm[i].y-miny)*scale; };
   var mpt=function(i,j,ax){ var v=(lm[i][ax]+lm[j][ax])/2; return ax==='x' ? ((box-p)-((v-minx)*scale)-ox) : (p+oy+(v-miny)*scale); };
   var stroke = pose.tier>=3 ? '#ffd23f' : '#3ef0a0';
-  gx.strokeStyle=stroke; gx.lineWidth=3; gx.lineCap='round'; gx.beginPath();
+  gx.strokeStyle=stroke; gx.lineWidth=3*u; gx.lineCap='round'; gx.beginPath();
   var bones=[[11,13],[13,15],[12,14],[14,16],[11,12]];
   bones.forEach(function(b){ if(lm[b[0]]&&lm[b[1]]){ gx.moveTo(sx(b[0]),sy(b[0])); gx.lineTo(sx(b[1]),sy(b[1])); } });
   gx.moveTo(mpt(23,24,'x'),mpt(23,24,'y')); gx.lineTo(mpt(11,12,'x'),mpt(11,12,'y'));   // torso
   if(hasLegs){ [[23,25],[25,27],[24,26],[26,28]].forEach(function(b){ if(lm[b[0]]&&lm[b[1]]){ gx.moveTo(sx(b[0]),sy(b[0])); gx.lineTo(sx(b[1]),sy(b[1])); } }); }
   gx.stroke();
-  gx.beginPath(); gx.arc(sx(0),sy(0),5,0,7); gx.stroke();                                 // head
+  gx.beginPath(); gx.arc(sx(0),sy(0),5*u,0,7); gx.stroke();                               // head
   gx.fillStyle='#ffd23f';
-  [11,12,13,14,15,16,23,24].forEach(function(i){ gx.beginPath(); gx.arc(sx(i),sy(i),2.5,0,7); gx.fill(); });
+  [11,12,13,14,15,16,23,24].forEach(function(i){ gx.beginPath(); gx.arc(sx(i),sy(i),2.5*u,0,7); gx.fill(); });
 }
 
 /* ============================ webcam skeleton overlay (SPEC §8 / DESIGN_SPEC §7) ============= */
@@ -1115,7 +1298,7 @@ function drawCamOverlay(){
   var w=cv.width||132, h=cv.height||99, x=0, y=0, s=w/132;   // s scales strokes to the (hi-res) canvas
   gx.clearRect(x,y,w,h);
   var lm=G.cam.lm;
-  var matched=(G.screen==='play') && (G.matchScore>=PASS_THRESHOLD);
+  var matched=(G.screen==='play'||G.screen==='tutorial') && (G.matchScore>=PASS_THRESHOLD);
   if(G.screen==='lobby' || G.screen==='over'){
     var pr=clamp(G.cam.tHold/GESTURE_HOLD,0,1);
     if(pr>0){ var cx=x+w/2, cy=y+h*0.42, r=26*s;
@@ -1144,12 +1327,14 @@ function update(ts){
   if(ts==null) ts=(G._last||0)+16;
   var dt=Math.min(0.05,(G._last?ts-G._last:16)/1000); G._last=ts; var t=ts/1000;
   pumpCamera();
-  // T-pose start / restart in lobby & over (camera mode)
+  // T-pose start / restart in lobby & over (camera mode). From the lobby a first-timer is routed
+  // into the tutorial (startFlow); restarts from the over screen go straight to a fresh game.
   if((G.screen==='lobby'||G.screen==='over') && G.control==='camera' && G.cam.on){
     if(G.cam.tpose) G.cam.tHold+=dt; else G.cam.tHold=Math.max(0,G.cam.tHold-dt*2);
-    if(G.cam.tHold>=GESTURE_HOLD){ G.cam.tHold=0; startGame(); }
+    if(G.cam.tHold>=GESTURE_HOLD){ G.cam.tHold=0; if(G.screen==='lobby') startFlow(); else startGame(); }
   }
   if(G.screen==='play') stepPlay(dt);
+  else if(G.screen==='tutorial') stepTutorial(dt);
   if(G.cam.on){ try{ drawCamOverlay(); }catch(e){} }
   if(typeof window!=='undefined' && typeof window.__pwRender==='function'){ try{ window.__pwRender(dt,t); }catch(e){} }
   if(typeof requestAnimationFrame!=='undefined') requestAnimationFrame(update);
@@ -1164,7 +1349,8 @@ function initInput(){
     var k=e.key;
     if(G.screen==='lobby' && !camBooting){ if(k===' '||k==='Enter'){ e.preventDefault(); startWithScheme('keyboard'); } return; }
     if(G.screen==='over'){ if(k===' '||k==='Enter'){ e.preventDefault(); startGame(); } return; }
-    if(G.screen!=='play') return;
+    // play AND tutorial accept the 1–8 pose picker + Enter/Space to lock (the tutorial teaches this)
+    if(G.screen!=='play' && G.screen!=='tutorial') return;
     if(k>='1' && k<='8'){ commitPose(parseInt(k,10)-1); e.preventDefault(); }
     else if(k===' '||k==='Enter'){ commitPose(G.selectedPoseIndex); e.preventDefault(); }
   });
@@ -1179,6 +1365,11 @@ function initDom(){
   wire('playCamBtn','click',function(){ startCameraFlow(); });
   wire('againBtn','click',function(){ startGame(); });
   wire('howToBtn','click',function(){ var hw=$('howto'); if(hw&&hw.classList) hw.classList.toggle('hidden'); });
+  // [NEW] tutorial controls
+  wire('tutorialBtn','click',function(){ replayTutorial(); });
+  wire('tutSkip','click',function(){ skipTutorial(); });
+  wire('tutStartBtn','click',function(){ tutorialStartGame(); });
+  wire('tutReadySkipBtn','click',function(){ skipTutorial(); });
   initInput();
   showScreen('lobby');
 }
@@ -1190,7 +1381,9 @@ if(typeof requestAnimationFrame!=='undefined') requestAnimationFrame(update);
   limbSimilarity:limbSimilarity, poseTarget:poseTarget, poseMatchScore:poseMatchScore, passesWall:passesWall,
   isTpose:isTpose, levelForScore:levelForScore, maxTierForLevel:maxTierForLevel, wallSpeed:wallSpeed,
   poseDifficulty:poseDifficulty, pickPose:pickPose, POSE_LIBRARY:POSE_LIBRARY, startGame:startGame,
-  startWithScheme:startWithScheme, commitPose:commitPose, onPoseResults:onPoseResults, update:update }; }catch(e){}
+  startWithScheme:startWithScheme, commitPose:commitPose, onPoseResults:onPoseResults, update:update,
+  startFlow:startFlow, startTutorial:startTutorial, skipTutorial:skipTutorial, replayTutorial:replayTutorial,
+  tutDone:tutDone, TUTORIAL_STEPS:TUTORIAL_STEPS }; }catch(e){}
 </script>
 </body>
 </html>

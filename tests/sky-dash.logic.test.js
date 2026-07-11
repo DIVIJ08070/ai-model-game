@@ -8,7 +8,8 @@ const lerp=(a,b,t)=>a+(b-a)*t;
 const sign=x=>x>0?1:(x<0?-1:0);
 const LIFT_MAX=3.5, ROLL_MAX=0.5, MAX_ALT=60, BANK_DEADZONE=0.12;
 const PARAMS={ gravity:4.0, baseSpeed:14, vxDamp:0.9, turnAccel:16, maxVx:8,
-               climbSlow:0.35, diveFast:0.5, glideDescent:0.35 };
+               climbSlow:0.35, diveFast:0.5, glideDescent:0.35,
+               diveAccel:16, termVy:20, tuckSpeed:0.35 };
 
 /* ---- pure functions (copied verbatim from the Engine) ---- */
 function flapImpulse(prevRaise, curRaise, dt, k, deadzone){
@@ -24,6 +25,15 @@ function glideFactor(wristSpan, shoulderW, raiseL, raiseR){
   var level=1-clamp(Math.max(Math.abs(raiseL),Math.abs(raiseR))/0.5,0,1);
   return wide*level;
 }
+function tuckAmount(wristSpan, shoulderW, raiseL, raiseR){
+  var sw=Math.max(1e-6,shoulderW);
+  var ratio=wristSpan/sw;
+  var narrow=clamp((1.05-ratio)/(1.05-0.40),0,1);
+  var hi=Math.max(Math.abs(raiseL),Math.abs(raiseR));
+  var near=1-clamp((hi-0.25)/(0.95-0.25),0,1);
+  var t=narrow*near;
+  return t<0.12 ? 0 : clamp((t-0.12)/(1-0.12),0,1);
+}
 function bankRate(raiseL, raiseR, deadzone, maxRate){
   if(deadzone==null) deadzone=BANK_DEADZONE; if(maxRate==null) maxRate=1.0;
   var diff=raiseL-raiseR;
@@ -38,10 +48,11 @@ function pitchRate(avgRaise, neutral, deadzone, maxRate){
 }
 function stepFlight(state, controls, dt, params){
   var p=params||PARAMS;
-  var lift=controls.lift||0, turn=controls.turn||0, pitch=controls.pitch||0, glide=controls.glide||0;
-  var descent=p.gravity*(1-glide*(1-p.glideDescent));
+  var lift=controls.lift||0, turn=controls.turn||0, pitch=controls.pitch||0, glide=controls.glide||0, tuck=controls.tuck||0;
+  var descent=p.gravity*(1-glide*(1-p.glideDescent)) + tuck*(p.diveAccel||0);
   state.vy=(state.vy||0)+lift-descent*dt;
-  state.speed=p.baseSpeed*(1-pitch*p.climbSlow)*(1+Math.max(0,-pitch)*p.diveFast);
+  if(tuck>0){ var term=-(p.termVy||18); if(state.vy<term) state.vy=term; }
+  state.speed=p.baseSpeed*(1-pitch*p.climbSlow)*(1+Math.max(0,-pitch)*p.diveFast)*(1+tuck*(p.tuckSpeed||0));
   state.vx=clamp((state.vx||0)*p.vxDamp - turn*p.turnAccel*dt,-p.maxVx,p.maxVx);
   state.x=(state.x||0)+state.vx*dt;
   state.z=(state.z||0)+state.speed*dt;
@@ -101,6 +112,20 @@ ok('glide is partial in the mid-band', glideFactor(0.20,0.1,0,0)>0 && glideFacto
 ok('glide always stays within [0,1]', (()=>{ let good=true;
   for(const ws of [0.10,0.16,0.20,0.30]) for(const rl of [-1,0,0.3,1]){ const g=glideFactor(ws,0.1,rl,0); if(g<0||g>1) good=false; } return good; })());
 
+// ---- 🤿 tuckAmount (FEATURE 1) — crossed/tucked arms → dive; the OPPOSITE of glide ----
+ok('crossed-in pose (narrow span, hands at chest) → tuck above the dead-zone', tuckAmount(0.05,0.12,0,0)>0,
+   'got '+tuckAmount(0.05,0.12,0,0).toFixed(3));
+ok('a wide/spread pose (glide-shaped) → NO tuck', tuckAmount(0.24,0.12,0,0)===0);
+ok('narrow BUT raised overhead → NO tuck (not a chest tuck)', tuckAmount(0.05,0.12,1.0,1.0)===0);
+ok('a barely-narrow pose stays inside the dead-zone → 0', tuckAmount(0.12,0.12,0,0)===0);
+ok('tuck always stays within [0,1]', (()=>{ let good=true;
+  for(const ws of [0.03,0.05,0.10,0.16,0.24]) for(const rl of [-1,-0.3,0,0.3,1]){ const tt=tuckAmount(ws,0.12,rl,rl); if(tt<0||tt>1) good=false; } return good; })());
+ok('tuck is CLEARLY DISTINCT from glide: wide→glide only, narrow-chest→tuck only', (()=>{
+  const wide = glideFactor(0.24,0.12,0,0)>0 && tuckAmount(0.24,0.12,0,0)===0;
+  const narrow = tuckAmount(0.05,0.12,0,0)>0 && glideFactor(0.05,0.12,0,0)===0;
+  return wide && narrow; })());
+ok('a tighter tuck reads stronger than a looser one', tuckAmount(0.04,0.12,0,0) > tuckAmount(0.09,0.12,0,0));
+
 // ---- ⇆ bankRate — DIRECTION CONVENTION (Manager #1): raiseL>raiseR ⇒ steer RIGHT (positive) ----
 ok('symmetric arms → no turn (dead-zone)', bankRate(0.5,0.5)===0);
 ok('a tiny asymmetry inside the dead-zone → no turn', bankRate(0.55,0.45)===0);
@@ -137,6 +162,18 @@ ok('roll follows the turn toward +ROLL_MAX for a RIGHT turn', (()=>{ let s=mkBir
   for(let i=0;i<40;i++) s=stepFlight(s,{turn:1},0.05); return s.roll>0 && s.roll<=ROLL_MAX+1e-9; })());
 ok('vx is clamped to ±maxVx', (()=>{ let s=mkBird(); for(let i=0;i<200;i++) s=stepFlight(s,{turn:1},0.1);
   return Math.abs(s.vx)<=PARAMS.maxVx+1e-9; })());
+
+// ---- 🤿 dive physics (FEATURE 1) — a tuck descends faster, clamped, with a small forward boost ----
+ok('a tuck/dive INCREASES descent (vy more negative + altitude drops) vs no tuck', (()=>{
+  const n=stepFlight(mkBird(),{tuck:0},0.1), d=stepFlight(mkBird(),{tuck:1},0.1);
+  return d.vy<n.vy && d.y<n.y; })());
+ok('a partial tuck dives between no-tuck and full-tuck', (()=>{
+  const n=stepFlight(mkBird(),{tuck:0},0.1), h=stepFlight(mkBird(),{tuck:0.5},0.1), d=stepFlight(mkBird(),{tuck:1},0.1);
+  return d.vy<h.vy && h.vy<n.vy; })());
+ok('the dive is a CONTROLLED speed-dive — vy clamps at terminal velocity, never a teleport', (()=>{
+  let s=mkBird(); for(let i=0;i<300;i++) s=stepFlight(s,{tuck:1},0.1); return s.vy>=-(PARAMS.termVy)-1e-9; })());
+ok('a tuck adds a small forward-speed boost', (()=>{
+  const n=stepFlight(mkBird(),{tuck:0},0.1), d=stepFlight(mkBird(),{tuck:1},0.1); return d.speed>n.speed; })());
 
 // ---- 🔝 applyCeiling — ground-relative altitude cap (kills only upward vy, never pulls down) ----
 ok('altitude caps at ground+MAX_ALT and kills upward vy', (()=>{ const b={x:0,y:200,z:0,vy:5}; applyCeiling(b,6,MAX_ALT); return b.y===66 && b.vy===0; })());

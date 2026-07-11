@@ -64,6 +64,9 @@ let CURRENT_LM=tposeLandmarks();
 const document={ getElementById:byId, createElement:()=>el('new'), head:el('head'),
   querySelectorAll:()=>[], addEventListener(){}, activeElement:null };
 const store={};
+// mark the first-time tutorial as already seen so the normal boot→play flow below is unblocked
+// (the dedicated tutorial section at the end clears this flag to exercise the first-time path).
+store['posewall_tut_done']='1';
 const localStorage={ getItem:k=>k in store?store[k]:null, setItem:(k,v)=>{store[k]=String(v);} };
 function Osc(){ return {type:'',frequency:{setValueAtTime(){}},connect(){return this;},start(){},stop(){}}; }
 function Gain(){ return {gain:{setValueAtTime(){},exponentialRampToValueAtTime(){}},connect(){return this;}}; }
@@ -196,8 +199,44 @@ function run(n,lm){ for(let i=0;i<n;i++){ if(lm) feed(lm); upd(16); } }
     if(G.score<20) err('win fired before 20 walls (score='+G.score+')');
   }
 
+  // 9) FIRST-TIME TUTORIAL — the start gate routes first-timers into a guided, NO-FAIL demo;
+  //    clearing a step needs a real pose match; "Skip" persists posewall_tut_done → returning
+  //    users then go straight to play.
+  {
+    G.control='keyboard';
+    delete store['posewall_tut_done'];          // simulate a brand-new player
+    S.startFlow();                              // first-time → tutorial, NOT normal play
+    if(G.screen!=='tutorial') err('first-time startFlow did not enter the tutorial (screen='+G.screen+')');
+    if(!G.tutorial.active) err('tutorial.active was not set on entry');
+    if(!(G.walls[0] && G.walls[0].target)) err('tutorial did not spawn a coaching wall');
+    if(G.tutorial.step!==0) err('tutorial did not begin on step 0 (step='+G.tutorial.step+')');
+
+    const livesBefore=G.lives;
+    // clear step 0 by holding the matching pose at the wait plane — must be no-fail (no life lost)
+    let g=0;
+    while(G.tutorial.active && G.tutorial.step===0 && G.walls[0] && g++<300){
+      S.commitPose(idxOf(G.walls[0].targetId));
+      G.walls[0].dist=0.001;                    // drive the wall to the hold plane
+      upd(16);
+    }
+    if(G.lives!==livesBefore) err('tutorial changed lives — it must be strictly no-fail (lives '+livesBefore+'→'+G.lives+')');
+    if(G.screen==='over') err('tutorial reached a game-over — it must be no-fail');
+    if(!(G.tutorial.step>0 || !G.walls[0])) err('holding the matching pose did not clear the first tutorial step');
+
+    // Skip tutorial → persists the done flag, deactivates, returns to the lobby
+    S.skipTutorial();
+    if(store['posewall_tut_done']!=='1') err('skipping the tutorial did not persist posewall_tut_done');
+    if(G.tutorial.active) err('skip did not deactivate the tutorial');
+    if(G.screen!=='lobby') err('skip did not return to the lobby (screen='+G.screen+')');
+
+    // returning user → startFlow goes straight to normal play (no tutorial)
+    S.startFlow();
+    if(G.screen!=='play') err('returning-user startFlow did not go straight to play (screen='+G.screen+')');
+    if(G.tutorial.active) err('returning-user flow should not re-activate the tutorial');
+  }
+
   if(errors.length){ console.log('RUNTIME ERRORS:\n'+errors.join('\n')); process.exit(1); }
-  console.log('pose-wall smoke: boot + camera + T-pose start + calibration + pass + lives-0 over + restart + keyboard pass/miss + 20-wall win all ran with no errors');
+  console.log('pose-wall smoke: boot + camera + T-pose start + calibration + pass + lives-0 over + restart + keyboard pass/miss + 20-wall win + first-time tutorial (no-fail step clear + skip flag) all ran with no errors');
   console.log('  final: screen='+G.screen+'  outcome='+G.outcome+'  score='+G.score+'  best='+store['posewall_best']+'  beststreak='+store['posewall_beststreak']);
   process.exit(0);
 })();

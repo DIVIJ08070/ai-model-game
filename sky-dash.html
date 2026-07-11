@@ -60,6 +60,26 @@
   #altRibbon>.fill{ position:absolute; left:0; bottom:0; width:100%; background:linear-gradient(180deg,var(--lane),var(--good)); transition:height .1s linear; }
   #altRibbon>.danger{ position:absolute; left:0; bottom:0; width:100%; height:22%; background:rgba(255,59,92,0.30); }
 
+  /* ---- [FEATURE 2] tutorial coaching side panel ---- */
+  #tutPanel{ position:absolute; left:12px; top:50%; transform:translateY(-50%); z-index:12; width:min(272px,44vw);
+    background:rgba(16,21,43,0.92); border:3px solid rgba(124,92,255,0.55); border-radius:20px; padding:16px 16px 12px;
+    box-shadow:0 12px 34px rgba(0,0,0,0.5); text-align:center; }
+  #tutPanel:not(.hidden){ animation:hudInL .42s ease-out; }
+  #tutPanel.success{ border-color:var(--good); box-shadow:0 0 0 2px rgba(62,240,160,0.35),0 12px 34px rgba(0,0,0,0.5); }
+  #tutPanel .tutProg{ font-size:14px; letter-spacing:3px; color:var(--lane); margin-bottom:8px; }
+  #tutPanel .tutRow{ display:flex; align-items:center; justify-content:center; gap:10px; margin-bottom:6px; }
+  #tutPanel .tutEmoji{ font-size:40px; line-height:1; filter:drop-shadow(0 2px 6px rgba(0,0,0,0.45)); }
+  #tutPanel.success .tutEmoji{ animation:tutBounce .5s ease-out; }
+  @keyframes tutBounce{ 0%{ transform:scale(1);} 40%{ transform:scale(1.35);} 100%{ transform:scale(1);} }
+  #tutPanel .tutName{ font-size:19px; font-weight:900; color:var(--ink); text-align:left; }
+  #tutPanel .tutHint{ font-size:13px; opacity:0.9; line-height:1.45; margin:2px 0 10px; }
+  #tutPanel .tutPrompt{ font-size:15px; font-weight:900; color:var(--warn); margin-bottom:6px; min-height:20px;
+    animation:timepulse 1.1s ease-in-out infinite; }
+  #tutPanel.success .tutPrompt{ color:var(--good); animation:none; }
+  #tutPanel .linkbtn{ margin-top:4px; }
+  @media (max-width:400px){ #tutPanel{ width:min(220px,60vw); left:8px; padding:12px; } #tutPanel .tutEmoji{ font-size:32px; } }
+  @media (prefers-reduced-motion: reduce){ #tutPanel:not(.hidden){ animation:none; } #tutPanel .tutPrompt{ animation:none; } #tutPanel.success .tutEmoji{ animation:none; } }
+
   /* ---- [ARCADE] webcam PIP — enlarged, neon-bordered "YOU" panel (DESIGN_SPEC §3.5) ---- */
   #camWrap{ position:absolute; right:14px; bottom:14px; z-index:9; width:clamp(150px,30vw,220px); aspect-ratio:4/3;
     border-radius:16px; overflow:hidden; background:#05070f;
@@ -164,6 +184,7 @@
   <div id="feedback" class="hidden">
     <div class="chip neutral" id="chipFlap">&#129461; <span class="cad"><span id="flapBar"></span></span></div>
     <div class="chip neutral" id="chipGlide">&#128330; <span id="glideVal">GLIDE</span></div>
+    <div class="chip neutral" id="chipTuck">🤿 <span id="tuckVal">DIVE</span></div>
     <div class="chip neutral" id="chipBank">&#8646; <span class="axis"><span class="mid"></span><span class="fillL" id="bankL"></span><span class="fillR" id="bankR"></span></span> <span id="bankTxt">&mdash;</span></div>
     <div class="chip neutral" id="chipPitch">&#8645; <span class="axis"><span class="mid"></span><span class="fillU" id="pitchU"></span><span class="fillD" id="pitchD"></span></span> <span id="pitchTxt">&mdash; LEVEL</span></div>
   </div>
@@ -176,6 +197,7 @@
       <button class="btn" id="playKeysBtn">&#9654; Play (keyboard)</button>
       <div class="ctarow"><button class="btn ghost" id="playCamBtn">&#128247; Camera</button></div>
       <div id="camMsg" class="sub" style="text-align:center;color:var(--warn);min-height:1px;margin:10px 0 0"></div>
+      <div class="ctarow"><button class="btn ghost" id="tutorialBtn">&#127891; Tutorial</button></div>
       <button class="linkbtn" id="howToBtn">How to fly</button>
       <div id="howto" class="hidden">
         <table class="howtbl">
@@ -184,7 +206,7 @@
           <tr><td class="act">Glide</td><td>Arms wide &amp; level</td><td>(auto when level)</td></tr>
           <tr><td class="act">Bank right</td><td>Raise L / lower R hand</td><td>&#9654; / D</td></tr>
           <tr><td class="act">Bank left</td><td>Raise R / lower L hand</td><td>&#9664; / A</td></tr>
-          <tr><td class="act">Dive</td><td>Tuck arms low</td><td>&#9660; / S</td></tr>
+          <tr><td class="act">Dive</td><td>Cross/tuck arms to chest</td><td>&#9660; / S</td></tr>
         </table>
         <div class="sub" style="margin:0">Bank = <b>lean into the turn</b>: raise your left / lower your right hand and the bird steers <b>&#9654; RIGHT</b>.</div>
       </div>
@@ -211,6 +233,24 @@
   <div class="screen hidden" id="calibScreen"><div class="card">
     <h1 class="title"><span class="a">GET</span><span class="b">READY</span></h1>
     <div class="sub">&#129485; Relax your arms into a comfortable flying rest &mdash; calibrating&hellip;</div>
+  </div></div>
+
+  <!-- FEATURE 2 — TUTORIAL side panel (one step at a time; slow-mo, no-fail coaching) -->
+  <div id="tutPanel" class="hidden">
+    <div class="tutProg" id="tutProg">&#9673; &#9675; &#9675; &#9675; &#9675;</div>
+    <div class="tutRow"><div class="tutEmoji" id="tutEmoji">&#129461;</div>
+      <div class="tutName" id="tutName">1/5 &nbsp;FLAP</div></div>
+    <div class="tutHint" id="tutHint">Flap both arms down like wings to climb.</div>
+    <div class="tutPrompt" id="tutPrompt">Do the pose now!</div>
+    <button class="linkbtn" id="tutSkipBtn">Skip tutorial</button>
+  </div>
+
+  <!-- FEATURE 2 — "You're ready!" panel after the last step -->
+  <div class="screen hidden" id="tutReadyScreen"><div class="card">
+    <h1 class="title"><span class="a">YOU&#39;RE</span><span class="b">READY!</span></h1>
+    <div class="sub">&#127881; You&#39;ve learned every move &mdash; flap, lean, dive &amp; glide. Time to fly for real!</div>
+    <button class="btn" id="tutStartBtn">&#9654; Start Game</button>
+    <div class="ctarow"><button class="btn ghost" id="tutSkipReadyBtn">Skip</button></div>
   </div></div>
 </div>
 
@@ -248,6 +288,7 @@ var ALT_MAX=MAX_ALT;        // ribbon fills to 100% exactly at the ceiling
 // ---- control feel (Goal 6) ----
 var BANK_DEADZONE=0.12, PITCH_DEADZONE=0.22;
 var BANK_SENS=1.35, PITCH_SENS=1.15, TURN_SMOOTH=0.25;
+var TUCK_DETECT=0.25;      // tuck reading above this counts as a deliberate dive (HUD/tutorial threshold)
 var TURN_SIGN=1;            // render-direction flip hook (Goal 1): whole turn direction flips from this ONE constant
 // ---- calibration (Goal 3) ----
 var CALIB_TIME=1.0, CALIB_RELAX=-0.4;   // sample only once arms drop to a relaxed rest (avgRaise below this)
@@ -255,7 +296,8 @@ var CALIB_TIME=1.0, CALIB_RELAX=-0.4;   // sample only once arms drop to a relax
 var APPLE_BEHIND=25, APPLE_AHEAD=60, APPLE_SPREAD=320;
 var OBST_BEHIND=25,  OBST_AHEAD=70,  OBST_SPREAD=420;
 var PARAMS={ gravity:4.0, baseSpeed:14, vxDamp:0.9, turnAccel:16, maxVx:8,
-             climbSlow:0.35, diveFast:0.5, glideDescent:0.35 };
+             climbSlow:0.35, diveFast:0.5, glideDescent:0.35,
+             diveAccel:16, termVy:20, tuckSpeed:0.35 };   // FEATURE 1: tucked-wing dive tuning
 
 /* ===================== PURE FUNCTIONS — mirrored into tests/sky-dash.logic.test.js =====================
    Every function here is f(numbers)->number/bool: no DOM, no globals (besides the tuning consts
@@ -278,6 +320,20 @@ function glideFactor(wristSpan, shoulderW, raiseL, raiseR){
   return wide*level;
 }
 
+/* 4.3b tuck amount (FEATURE 1) — both wrists pulled IN close to the chest (arms crossed/hugged),
+   ∈[0,1]. The OPPOSITE of glide: glide = wrists WIDE & level; tuck = wrists NARROW & near chest.
+   High only when the wrist span collapses well under a shoulder-width AND the hands sit near
+   chest height (neither raised overhead nor dropped to the hips). Small dead-zone built in. */
+function tuckAmount(wristSpan, shoulderW, raiseL, raiseR){
+  var sw=Math.max(1e-6,shoulderW);
+  var ratio=wristSpan/sw;
+  var narrow=clamp((1.05-ratio)/(1.05-0.40),0,1);            // 1 when wrists crossed IN (<0.4 sw), 0 by ~1.05 sw
+  var hi=Math.max(Math.abs(raiseL),Math.abs(raiseR));
+  var near=1-clamp((hi-0.25)/(0.95-0.25),0,1);               // 1 near chest, 0 once a hand is raised/dropped past ~0.95
+  var t=narrow*near;
+  return t<0.12 ? 0 : clamp((t-0.12)/(1-0.12),0,1);          // small dead-zone
+}
+
 /* 4.4 bank rate — arm-height asymmetry → turn. BINDING: raiseL>raiseR ⇒ steer RIGHT (positive). */
 function bankRate(raiseL, raiseR, deadzone, maxRate){
   if(deadzone==null) deadzone=BANK_DEADZONE; if(maxRate==null) maxRate=1.0;
@@ -297,10 +353,11 @@ function pitchRate(avgRaise, neutral, deadzone, maxRate){
 /* 4.6 flight integrator (pure). state mutated & returned. */
 function stepFlight(state, controls, dt, params){
   var p=params||PARAMS;
-  var lift=controls.lift||0, turn=controls.turn||0, pitch=controls.pitch||0, glide=controls.glide||0;
-  var descent=p.gravity*(1-glide*(1-p.glideDescent));         // glide softens gravity
+  var lift=controls.lift||0, turn=controls.turn||0, pitch=controls.pitch||0, glide=controls.glide||0, tuck=controls.tuck||0;
+  var descent=p.gravity*(1-glide*(1-p.glideDescent)) + tuck*(p.diveAccel||0);   // glide softens gravity; tuck = tucked-wing dive → extra descent
   state.vy=(state.vy||0)+lift-descent*dt;                     // flap up, gravity down
-  state.speed=p.baseSpeed*(1-pitch*p.climbSlow)*(1+Math.max(0,-pitch)*p.diveFast); // climb→slower, dive→faster
+  if(tuck>0){ var term=-(p.termVy||18); if(state.vy<term) state.vy=term; }       // controlled speed-dive → clamp terminal velocity (never a teleport)
+  state.speed=p.baseSpeed*(1-pitch*p.climbSlow)*(1+Math.max(0,-pitch)*p.diveFast)*(1+tuck*(p.tuckSpeed||0)); // climb→slower, dive→faster, tuck→small forward boost
   state.vx=clamp((state.vx||0)*p.vxDamp - turn*p.turnAccel*dt,-p.maxVx,p.maxVx);    // bank → lateral steer (turn>0 = RIGHT = world −x = screen-right)
   state.x=(state.x||0)+state.vx*dt;
   state.z=(state.z||0)+state.speed*dt;                        // auto-fly forward
@@ -361,7 +418,8 @@ var G={
   obstacles:[],            // {x,y,z,type,r}
   timeLeft:ROUND_TIME,
   outcome:null,            // 'win' | 'crash' | 'timeup' | null
-  controls:{lift:0,turn:0,pitch:0,glide:0},
+  controls:{lift:0,turn:0,pitch:0,glide:0,tuck:0},
+  tut:null,                // FEATURE 2: tutorial state machine (null unless in the tutorial)
   pendingLift:0,           // keyboard flap impulses awaiting a frame
   keys:{left:false,right:false,dive:false,climb:false},
   _last:0, _flapDisp:0
@@ -479,7 +537,7 @@ function onPoseResults(res){
 /* ================================ controls =================================== */
 function flap(){ if(G.screen!=='play') return; G.pendingLift=Math.min(G.pendingLift+FLAP_IMPULSE,LIFT_MAX); sfx('flap'); }
 function computeControls(dt){
-  var lift=0,turn=0,pitch=0,glide=0;
+  var lift=0,turn=0,pitch=0,glide=0,tuck=0;
   if(G.pendingLift>0){ lift+=G.pendingLift; G.pendingLift=0; }        // keyboard flaps
   if(G.control==='camera' && G.cam.seen){
     var c=G.cam, cur=c.avgRaise;
@@ -493,12 +551,15 @@ function computeControls(dt){
     pitch=clamp(pitchRate(c.avgRaise,(c.calibrated?c.neutralRaise:DEFAULT_NEUTRAL),PITCH_DEADZONE)*PITCH_SENS,-1,1);
     c.lastPitch=pitch;
     glide=glideFactor(c.wristSpan,(c.calibrated?c.baseShoulderW:c.shoulderW),rL,rR);
+    // FEATURE 1 — tuck/dive: raw wrist span vs a stable shoulder width, raw wrist heights (absolute "chest" sense)
+    tuck=tuckAmount(c.wristSpan,(c.calibrated?c.baseShoulderW:c.shoulderW),c.raiseL,c.raiseR);
   } else if(G.control==='keyboard'){
     turn=(G.keys.right?1:0)-(G.keys.left?1:0);
     pitch=(G.keys.climb?1:0)-(G.keys.dive?1:0);
     glide=(!G.keys.dive)?KB_GLIDE:0;
+    tuck=(G.keys.dive?1:0);                                             // Down/S = dive (keyboard fallback)
   }
-  return {lift:lift,turn:turn,pitch:pitch,glide:glide};
+  return {lift:lift,turn:turn,pitch:pitch,glide:glide,tuck:tuck};
 }
 
 /* ================================ game flow ================================== */
@@ -537,16 +598,24 @@ function stepCalib(dt){
       c.baseShoulderW=c._sumSW/c._n; c.baseTorso=c._sumTorso/c._n; c.baseShoulderY=c._sumSY/c._n;
       c.baseWristSpan=c._sumSpan/c._n; c.calibrated=true; }
     else { c.calibrated=false; c.neutralRaise=DEFAULT_NEUTRAL; }   // never fall back to a T-pose average
-    startGame();
+    afterCalibration();
   }
 }
+/* First-time camera players get the interactive tutorial after calibration; returning users
+   (skydash_tut_done flag set) drop straight into play (FEATURE 2). */
+function shouldRunTutorial(){
+  if(G.control!=='camera') return false;             // the tutorial teaches camera poses
+  try{ return localStorage.getItem('skydash_tut_done')!=='1'; }catch(e){ return false; }
+}
+function afterCalibration(){ if(shouldRunTutorial()) startTutorial(); else startGame(); }
 function startWithScheme(s){ audioOn(); if(s!=='camera' && G.cam.on) teardownCamera(); G.control=s; startGame(); }
 function startGame(){
   G.screen='play'; G.running=true; G.outcome=null; G.newBest=false;
   G.timeLeft=ROUND_TIME; G.applesCollected=0; G.pendingLift=0; G._flapDisp=0;
   G.keys={left:false,right:false,dive:false,climb:false};
   G.bird={ x:0, y:START_ALT, z:0, vx:0, vy:0, vz:0, roll:0, pitch:0, speed:PARAMS.baseSpeed };
-  G.controls={lift:0,turn:0,pitch:0,glide:0};
+  G.controls={lift:0,turn:0,pitch:0,glide:0,tuck:0};
+  G.tut=null;
   buildLevel();
   // consume the committed calibration baseline; fall back to defaults for keyboard / uncalibrated (SPEC §4.7)
   if(!(G.control==='camera' && G.cam.calibrated)){
@@ -598,6 +667,95 @@ function gameOver(outcome){
   updateOverUI();
 }
 
+/* ============================ FEATURE 2 — interactive tutorial =============== */
+/* A guided, no-fail, slow-mo demo teaching each mechanic IN SEQUENCE. Reuses the live
+   detectors (via computeControls) + the existing three.js scene (G.bird flies the world). */
+var TUT_STEPS=[
+  { key:'flap',  name:'FLAP',        emoji:'🐦', hint:'Flap BOTH arms down like wings to climb over the peak.' },
+  { key:'right', name:'LEAN RIGHT',  emoji:'👉', hint:'Raise your LEFT hand / lower your RIGHT to bank RIGHT around it.' },
+  { key:'left',  name:'LEAN LEFT',   emoji:'👈', hint:'Raise your RIGHT hand / lower your LEFT to bank LEFT around it.' },
+  { key:'tuck',  name:'TUCK & DIVE', emoji:'🤿', hint:'Cross both arms tight to your chest to tuck & dive under it.' },
+  { key:'glide', name:'GLIDE',       emoji:'🕊️', hint:'Hold both arms out WIDE and level to glide the long stretch.' }
+];
+var TUT_SLOW=0.4, TUT_CRUISE=CRUISE_ALT;   // slow-mo forward factor + hover band
+function tutScenario(step){
+  var typ = step.key==='flap'?'mountain' : (step.key==='left'||step.key==='right')?'rock' : 'tree';
+  return { x:0, y:TUT_CRUISE, z:(G.bird?G.bird.z:0)+40, type:typ, r:3 };
+}
+function buildTutObstacle(){ var s=TUT_STEPS[G.tut.step]; G.apples=[]; G.obstacles=[tutScenario(s)]; }
+function startTutorial(){
+  G.screen='tutorial'; G.running=false; G.outcome=null;
+  G.tut={ step:0, phase:'coach', flash:0, t:0, promptT:0 };
+  G.bird={ x:0, y:START_ALT, z:0, vx:0, vy:0, vz:0, roll:0, pitch:0, speed:PARAMS.baseSpeed };
+  G.controls={lift:0,turn:0,pitch:0,glide:0,tuck:0};
+  G.pendingLift=0; G.keys={left:false,right:false,dive:false,climb:false};
+  G.cam.prevAvg=null;
+  buildTutObstacle();
+  showScreen('tutorial');
+}
+function detectTutPose(key,c){
+  if(key==='flap')  return (c.lift||0) > 0.05;
+  if(key==='right') return (c.turn||0) >  0.25;
+  if(key==='left')  return (c.turn||0) < -0.25;
+  if(key==='tuck')  return (c.tuck||0) >  TUCK_DETECT;
+  if(key==='glide') return (c.glide||0) >= 0.6;
+  return false;
+}
+function stepTutorial(dt){
+  var T=G.tut; if(!T) return;
+  T.t+=dt;
+  var ctrl=computeControls(dt); G.controls=ctrl;                 // live camera/keyboard controls (full dt so flap velocity reads right)
+  // slow-mo, no-fail flight: the world stays alive but the bird never sinks or crashes
+  var sdt=dt*TUT_SLOW;
+  stepFlight(G.bird,{lift:ctrl.lift,turn:ctrl.turn,pitch:0,glide:0.6,tuck:0},sdt,PARAMS);
+  applyCeiling(G.bird,groundYAt(G.bird.x,G.bird.z),MAX_ALT);
+  var floor=TUT_CRUISE-8; if(G.bird.y<floor){ G.bird.y=floor; if(G.bird.vy<0) G.bird.vy=0; }   // never let them crash
+  G.bird.x=clamp(G.bird.x,-CORRIDOR,CORRIDOR);
+  if(G.obstacles[0]) G.obstacles[0].z=G.bird.z+30;              // keep the scenario gently ahead (no collision in the tutorial)
+  if(T.phase==='coach'){
+    T.promptT+=dt;
+    if(detectTutPose(TUT_STEPS[T.step].key,ctrl)){ T.phase='success'; T.flash=0; sfx('coin'); G.obstacles=[]; }  // clear the obstacle
+  } else if(T.phase==='success'){
+    T.flash+=dt;
+    if(T.flash>=0.9){
+      if(T.step>=TUT_STEPS.length-1){ enterTutReady(); }
+      else { T.step++; T.phase='coach'; T.promptT=0; T.flash=0; buildTutObstacle(); }
+    }
+  }
+  updateTutUI();
+}
+function enterTutReady(){
+  G.tut.phase='ready'; G.obstacles=[];
+  try{ localStorage.setItem('skydash_tut_done','1'); }catch(e){}   // completed → don't auto-show again
+  updateTutUI();
+}
+function tutSkip(){                                              // "Skip tutorial" (mid-steps or the ready panel) → lobby
+  try{ localStorage.setItem('skydash_tut_done','1'); }catch(e){}
+  G.tut=null; G.bird=null; G.screen='lobby'; showScreen('lobby');
+}
+function tutStartGame(){                                         // ready panel "Start Game" → real play
+  try{ localStorage.setItem('skydash_tut_done','1'); }catch(e){}
+  G.tut=null; startGame();
+}
+function replayTutorial(){                                       // lobby "Tutorial" button
+  audioOn();
+  if(G.control==='camera' && G.cam.on){ startTutorial(); }
+  else { startCameraFlow().then(function(){ if(G.cam.on) startTutorial(); }); }
+}
+function updateTutUI(){
+  var T=G.tut; if(!T) return;
+  var ready=(T.phase==='ready');
+  var step=TUT_STEPS[Math.min(T.step,TUT_STEPS.length-1)];
+  var nm=$('tutName'); if(nm) nm.textContent=(T.step+1)+'/'+TUT_STEPS.length+'  '+step.name;
+  var em=$('tutEmoji'); if(em) em.textContent=step.emoji;
+  var hn=$('tutHint'); if(hn) hn.textContent=step.hint;
+  var pr=$('tutPrompt'); if(pr) pr.textContent=(T.phase==='success')?'Nice! ✓':'Do the pose now!';
+  var pg=$('tutProg'); if(pg){ var dots=''; for(var i=0;i<TUT_STEPS.length;i++){ dots+=(i<T.step?'●':(i===T.step?'◉':'○'))+(i<TUT_STEPS.length-1?' ':''); } pg.textContent=dots; }
+  var pn=$('tutPanel'); if(pn&&pn.classList) pn.classList.toggle('success',T.phase==='success');
+  show('tutPanel', !ready);
+  show('tutReadyScreen', ready);
+}
+
 /* ================================ HUD / screens ============================== */
 function show(id,on){ var e=$(id); if(e&&e.classList) e.classList.toggle('hidden',!on); }
 function showScreen(name){
@@ -605,8 +763,10 @@ function showScreen(name){
   show('overScreen', name==='over');
   show('calibScreen', name==='calib');
   show('hud', name==='play');
-  show('feedback', name==='play');
+  show('feedback', name==='play' || name==='tutorial');   // live control chips help during the tutorial too
   show('altRibbon', name==='play');
+  if(name==='tutorial'){ updateTutUI(); }                 // toggles tutPanel vs tutReadyScreen by phase
+  else { show('tutPanel', false); show('tutReadyScreen', false); }
   // Keep the player's camera PIP visible across EVERY screen while the camera is live —
   // especially during calibration AND play (fixes "camera not showing when playing").
   showCamPip(!!G.cam.on);
@@ -618,6 +778,9 @@ function updateChips(){
   setChip('chipFlap',(c.lift||0)>0.01);
   setChip('chipGlide',(c.glide||0)>=0.6);
   var gl=$('glideVal'); if(gl) gl.textContent=((c.glide||0)>=0.6)?'GLIDE ✓':'GLIDE';
+  var diving=(c.tuck||0)>TUCK_DETECT;
+  setChip('chipTuck',diving);
+  var tv=$('tuckVal'); if(tv) tv.textContent=diving?'DIVE ▼':'DIVE';
   var turn=c.turn||0, tm=Math.min(Math.abs(turn),1)*100;
   var bL=$('bankL'), bR=$('bankR'); if(bL&&bL.style) bL.style.width=(turn<0?tm:0)+'%'; if(bR&&bR.style) bR.style.width=(turn>0?tm:0)+'%';
   setChip('chipBank',Math.abs(turn)>0.001);
@@ -663,6 +826,7 @@ var CON=[[11,12],[11,23],[12,24],[23,24],[11,13],[13,15],[12,14],[14,16],
   [15,17],[15,19],[15,21],[16,18],[16,20],[16,22],[0,11],[0,12]];
 function roundRect(gx,x,y,w,h,r){ gx.beginPath(); gx.moveTo(x+r,y); gx.arcTo(x+w,y,x+w,y+h,r); gx.arcTo(x+w,y+h,x,y+h,r); gx.arcTo(x,y+h,x,y,r); gx.arcTo(x,y,x+w,y,r); gx.closePath(); }
 function overlayStatus(){
+  if(G.screen==='tutorial') return (G.tut&&G.tut.phase==='success')?'nice! ✓':'do the pose shown ←';
   if(G.screen==='calib') return 'relax your arms — calibrating…';
   if(G.screen==='lobby') return G.cam.tpose?'hold the T… taking off':'🧍 make a T-shape to fly';
   if(G.screen==='over')  return G.cam.tpose?'hold the T… restarting':'🧍 make a T-shape to fly again';
@@ -714,6 +878,7 @@ function update(ts){
     if(G.cam.tHold>=GESTURE_HOLD){ G.cam.tHold=0; beginCalibration(); }
   }
   if(G.screen==='calib') stepCalib(dt);
+  if(G.screen==='tutorial') stepTutorial(dt);
   if(G.screen==='play') stepPlay(dt);
   if(G.cam.on){ try{ drawCamOverlay(); }catch(e){} }
   if(typeof window!=='undefined' && typeof window.__skyRender==='function'){ try{ window.__skyRender(dt,t); }catch(e){} }
@@ -752,6 +917,10 @@ function initDom(){
   wire('playCamBtn','click',function(){ startCameraFlow(); });
   wire('againBtn','click',function(){ startGame(); });
   wire('howToBtn','click',function(){ var hw=$('howto'); if(hw&&hw.classList) hw.classList.toggle('hidden'); });
+  wire('tutorialBtn','click',function(){ replayTutorial(); });       // FEATURE 2 replay
+  wire('tutSkipBtn','click',function(){ tutSkip(); });
+  wire('tutSkipReadyBtn','click',function(){ tutSkip(); });
+  wire('tutStartBtn','click',function(){ tutStartGame(); });
   initInput();
   showScreen('lobby');
 }
@@ -760,9 +929,10 @@ if(typeof requestAnimationFrame!=='undefined') requestAnimationFrame(update);
 
 /* ============================ test exposer (SPEC §6.2) ======================= */
 ;try{ globalThis.__sky = { G:G, update:update, startGame:startGame, onPoseResults:onPoseResults,
-  flapImpulse:flapImpulse, glideFactor:glideFactor, bankRate:bankRate, pitchRate:pitchRate, stepFlight:stepFlight,
+  flapImpulse:flapImpulse, glideFactor:glideFactor, tuckAmount:tuckAmount, bankRate:bankRate, pitchRate:pitchRate, stepFlight:stepFlight,
   applyCeiling:applyCeiling, appleCollected:appleCollected, isCrash:isCrash, isTpose:isTpose,
   computeScore:computeScore, flap:flap, startWithScheme:startWithScheme, beginCalibration:beginCalibration,
+  startTutorial:startTutorial, skipTutorial:tutSkip, tutStartGame:tutStartGame, stepTutorial:stepTutorial,
   groundYAt:groundYAt }; }catch(e){}
 </script>
 
@@ -1071,7 +1241,7 @@ try{
 
   let flapClock=0, wingSettleR=0.12, wingSettleL=0.12, hoverPhase=0;
   function animateWings(G,t,dt){
-    const c=G.controls||{}, glide=c.glide||0, turn=clampN(c.turn||0,-1,1);
+    const c=G.controls||{}, glide=c.glide||0, turn=clampN(c.turn||0,-1,1), tuck=clampN(c.tuck||0,0,1);
     const flapAmp=Math.max(0,Math.min(1,(G._flapDisp||0)));   // 0..1 flap intensity from Engine's HUD signal
     const flapping=flapAmp>0.06;
     flapClock += dt*(6 + flapAmp*20);
@@ -1085,6 +1255,8 @@ try{
       const beat=flapAmp*beatAmp*eased;                       // +~61° up → -~48° down, scaled by lift
       base=0.12+idle+beat;                                    // soaring V rest + bob + flap beat
     }
+    // FEATURE 1 — tuck/dive: fold the wings sharply down against the body
+    if(tuck>0.03) base = base + (-0.6-base)*tuck;
     // wings carve INTO the bank: the inside wing dips, the outside wing lifts — reads the turn
     const carve=reduceMotion?0:turn*0.22;
     const dihR=base-carve, dihL=base+carve;
@@ -1093,6 +1265,8 @@ try{
     wingSettleL += (dihL-wingSettleL)*k;
     bird.userData.pivR.rotation.z = wingSettleR;
     bird.userData.pivL.rotation.z = -wingSettleL;
+    bird.userData.pivR.rotation.x = tuck*0.5;                 // sweep the wings back into a dive tuck
+    bird.userData.pivL.rotation.x = tuck*0.5;
     // gentle "alive" hover bob (visual only — never touches physics/collision, which read G.bird.y)
     if(!reduceMotion){ hoverPhase += dt*1.4*6.283; bird.position.y += Math.sin(hoverPhase)*0.06*(1-0.7*flapAmp); }
   }
@@ -1140,7 +1314,8 @@ try{
       if(G.bird){
         bird.visible=true;
         bird.position.set(G.bird.x, G.bird.y, G.bird.z);
-        bird.rotation.set(-(G.bird.pitch||0)*0.32, 0, (G.bird.roll||0));   // pitch (climb=nose up) + roll (bank)
+        const tuckN = clampN((G.controls&&G.controls.tuck)||0,0,1);
+        bird.rotation.set(-(G.bird.pitch||0)*0.32 - tuckN*0.55, 0, (G.bird.roll||0));   // pitch (climb=nose up) + roll (bank); tuck pitches nose DOWN
         animateWings(G,t,dt);   // wing flap/carve + hover bob (adjusts bird.position.y AFTER the base set)
       } else { bird.visible=false; }
 

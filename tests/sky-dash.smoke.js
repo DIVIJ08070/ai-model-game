@@ -76,6 +76,10 @@ let CURRENT_LM=bodyLandmarks(0.5,0.62);
 const document={ getElementById:byId, createElement:()=>el('new'), head:el('head'),
   querySelectorAll:()=>[], addEventListener(){}, activeElement:null };
 const store={};
+// FEATURE 2: mark the first-time tutorial as already seen so the normal boot→calib→PLAY flow
+// below is NOT diverted into the tutorial state. The tutorial state machine is exercised
+// explicitly at the end of the run.
+store['skydash_tut_done']='1';
 const localStorage={ getItem:k=>k in store?store[k]:null, setItem:(k,v)=>{store[k]=String(v);} };
 function Osc(){ return {type:'',frequency:{setValueAtTime(){}},connect(){return this;},start(){},stop(){}}; }
 function Gain(){ return {gain:{setValueAtTime(){},exponentialRampToValueAtTime(){}},connect(){return this;}}; }
@@ -194,6 +198,24 @@ function run(n,lm){ for(let i=0;i<n;i++){ if(lm) feed(lm); upd(16); } }
   if(!(G.bird.speed>spNeutral)) errors.push('keyboard dive did not speed up ('+spNeutral.toFixed(1)+' vs '+G.bird.speed.toFixed(1)+')');
   if(!(G.bird.z>zStart)) errors.push('keyboard play did not auto-fly forward (z did not advance)');
   if(G.screen!=='play') errors.push('keyboard play ended unexpectedly (screen='+G.screen+')');
+
+  // 9) FEATURE 2 — TUTORIAL state machine: enter → detect a pose to advance → skip persists the flag
+  delete store['skydash_tut_done'];         // simulate a first-time / replay user
+  G.control='camera';
+  S.startTutorial();
+  if(G.screen!=='tutorial') errors.push('startTutorial did not enter the tutorial screen (screen='+G.screen+')');
+  if(!G.tut || G.tut.step!==0 || G.tut.phase!=='coach') errors.push('tutorial did not open at step 0 in the coaching phase');
+  if(byId('tutPanel').classList.contains('hidden')) errors.push('the tutorial side panel is not visible on step 0');
+  // detect the FLAP step: a wing down-stroke gives lift>0 → the step is cleared, then auto-advances
+  run(2, flapPose(true));                   // arms up (seeds prevAvg high — no lift yet)
+  feed(flapPose(false)); upd(16);           // down-stroke → flap detected
+  run(70, flapPose(false));                 // let the ~0.9s "Nice!" success flash resolve and advance
+  if(!(G.tut && (G.tut.step>0 || G.tut.phase==='ready'))) errors.push('flapping did not advance the tutorial (step='+(G.tut&&G.tut.step)+', phase='+(G.tut&&G.tut.phase)+')');
+  // "Skip tutorial" always works → sets the done flag so it never auto-shows again, returns to the lobby
+  S.skipTutorial();
+  if(store['skydash_tut_done']!=='1') errors.push('skipping the tutorial did not persist skydash_tut_done');
+  if(G.screen!=='lobby') errors.push('skipping the tutorial did not return to the lobby (screen='+G.screen+')');
+  if(G.tut!==null) errors.push('skipping the tutorial did not clear the tutorial state');
 
   if(errors.length){ console.log('RUNTIME ERRORS:\n'+errors.join('\n')); process.exit(1); }
   console.log('sky-dash smoke: boot + camera + T-pose start + flap + bank/pitch + collect + win + restart + crash + keyboard all ran with no errors');
