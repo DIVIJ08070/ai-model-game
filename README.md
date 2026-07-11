@@ -141,6 +141,45 @@ the first time) and requires `localhost` or HTTPS.
 
 ---
 
+## 🧱 Pose Wall — a body pose-matching "hole in the wall" game
+
+A wall with a **human-shaped hole** cut into it slides toward you — **contort your body to match
+the silhouette** and fit through the hole before the wall reaches you. Match well enough and you
+pass through (**+1**, your streak grows, the wall shatters past); miss and you **lose a life** and
+the wall bursts red. Walls come **faster** and poses get **harder** as your score climbs. **Win at
+20 walls cleared**; **game over at 0 lives** (final score = walls cleared). The whole game is
+self-contained in [`pose-wall.html`](pose-wall.html) — [three.js](https://threejs.org) **0.160.0**
++ MediaPipe Pose loaded from a CDN, no build step, built as an **Engine** (game logic) / **View**
+(three.js) split. Camera frames are processed **entirely in your browser** — nothing is uploaded.
+Your best score and best streak are saved locally (`localStorage["posewall_best"]` /
+`["posewall_beststreak"]`).
+
+### Controls
+
+| Action | 📷 Camera | ⌨ Keyboard |
+|---|---|---|
+| Match the wall's shape | Contort to match the glowing silhouette — the **match %** meter fills **green** as you lock in | Number keys **1–8** commit the library poses |
+| Lock it in | (auto at the impact plane) | **Enter / Space** commits the selected pose |
+| Start / restart | 🧍 T‑pose (hold 0.6 s) | Enter / Space |
+
+Poses are **directional** — a shape with your **left** arm up needs your **left** arm. The camera
+view is mirrored, so it reads like a mirror. The camera is optional — keyboard mode plays the full
+game (walls, lives, streak, win / game‑over) with no webcam.
+
+### Run it locally
+
+Camera access needs a **secure context** (localhost counts), so serve the folder:
+
+```bash
+python3 -m http.server 8000
+# open http://localhost:8000/pose-wall.html in Chrome/Edge
+```
+
+Keyboard mode needs nothing. Camera mode downloads the MediaPipe Pose model once (needs internet
+the first time) and requires `localhost` or HTTPS.
+
+---
+
 ## Tests
 
 Pure logic + headless runtime + API, no browser or DB needed:
@@ -151,6 +190,8 @@ node tests/runtime.smoke.js   # boots the whole game in a DOM/pose shim; drives 
 node tests/api.test.js        # leaderboard handler with a mocked Postgres (validation, ranking, offline)
 node tests/sky-dash.logic.test.js  # Sky Dash flight math: flap/glide/bank/pitch, collision, isTpose
 node tests/sky-dash.smoke.js       # boots the Sky Dash engine in a DOM/pose shim; camera AND keyboard runs
+node tests/pose-wall.logic.test.js # Pose Wall pose-match math: self-match, directional poses, isTpose, difficulty ramp
+node tests/pose-wall.smoke.js      # boots the Pose Wall engine in a DOM/pose shim; camera + keyboard, win + game-over
 # or: npm test
 ```
 
