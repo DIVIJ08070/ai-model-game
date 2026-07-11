@@ -180,6 +180,52 @@ the first time) and requires `localhost` or HTTPS.
 
 ---
 
+## 🪄 Spell Caster — a lean-to-dodge + draw-to-cast spell duel
+
+Stand in front of the webcam as a battle-mage in a third-person arena. Waves of floating enemies
+drift in, telegraph, and hurl glowing projectiles down the lane at you — **lean your torso left /
+right to strafe-dodge** and **duck to dodge high attacks** — while you **draw a glyph shape in the
+air with your index finger** to cast a spell at the nearest enemy. Four glyphs → four spells:
+**straight line = Bolt**, **triangle = Fireball**, **circle = Shield**, **zigzag = Lightning**.
+Clear **5 waves** to win; **HP hits 0** and you lose. The whole game is self-contained in
+[`spell-caster.html`](spell-caster.html) — [three.js](https://threejs.org) **0.160.0** + MediaPipe
+**Pose *and* Hands** loaded from a CDN, no build step, built as an **Engine** (game logic) / **View**
+(three.js) split. One shared webcam pump **alternates Pose and Hands each frame** during play (body
+lean/duck from Pose, fingertip glyph drawing from Hands). Camera frames are processed **entirely in
+your browser** — nothing is uploaded. Your best score is saved locally
+(`localStorage["spellcaster_best"]`).
+
+### Controls
+
+| Action | 📷 Camera | ⌨ Keyboard |
+|---|---|---|
+| Strafe-dodge left / right | Lean torso left / right | ◄ ► or A D |
+| Duck (dodge high attacks) | Crouch down | ▼ / S |
+| Bolt (line) | Draw a ╱ straight line | 1 / Space |
+| Fireball (triangle) | Draw a △ triangle | 2 |
+| Shield (circle) | Draw a ◯ circle | 3 |
+| Lightning (zigzag) | Draw a ⚡ zigzag | 4 |
+| Start / restart | 🧍 T‑pose (hold 0.6 s) | Enter |
+
+Point your **index finger up** to start drawing a glyph; **drop it** to cast. Enemy projectiles are
+colour-coded to teach the two dodge paths: **red bolts → strafe** to a different lane, **amber bolts
+→ duck**. The camera is optional — keyboard mode plays the full game (dodge, cast, 5 waves, win /
+game‑over) with no webcam.
+
+### Run it locally
+
+Camera access needs a **secure context** (localhost counts), so serve the folder:
+
+```bash
+python3 -m http.server 8000
+# open http://localhost:8000/spell-caster.html in Chrome/Edge
+```
+
+Keyboard mode needs nothing. Camera mode downloads the MediaPipe Pose and Hands models once (needs
+internet the first time) and requires `localhost` or HTTPS.
+
+---
+
 ## Tests
 
 Pure logic + headless runtime + API, no browser or DB needed:
@@ -192,6 +238,8 @@ node tests/sky-dash.logic.test.js  # Sky Dash flight math: flap/glide/bank/pitch
 node tests/sky-dash.smoke.js       # boots the Sky Dash engine in a DOM/pose shim; camera AND keyboard runs
 node tests/pose-wall.logic.test.js # Pose Wall pose-match math: self-match, directional poses, isTpose, difficulty ramp
 node tests/pose-wall.smoke.js      # boots the Pose Wall engine in a DOM/pose shim; camera + keyboard, win + game-over
+node tests/spell-caster.logic.test.js # Spell Caster control math: torso lean/dodge, duck, index-extend/pinch, glyph recognizer, isTpose, detector routing
+node tests/spell-caster.smoke.js      # boots the Spell Caster engine in a DOM/Pose+Hands shim; camera + keyboard, dodge + cast, 5-wave win + HP-0 game-over
 # or: npm test
 ```
 
