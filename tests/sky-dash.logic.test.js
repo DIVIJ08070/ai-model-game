@@ -217,6 +217,15 @@ ok('arms tucked in (narrow) is NOT a T-pose', isTpose(ARMS_NARROW)===false);
 ok('arms raised up (not level) is NOT a T-pose', isTpose(ARMS_UP)===false);
 ok('no landmarks → not a T-pose', isTpose(null)===false && isTpose([])===false);
 
+// ---- 🗺️ map registry (selectable themes) — mirrored VERBATIM from sky-dash.html ----
+var MAPS=[{ id:'meadow', label:'Green Hills', emoji:'⛰️' },{ id:'beach', label:'Beach', emoji:'🏝️' }];
+function mapDef(id){ for(var i=0;i<MAPS.length;i++){ if(MAPS[i].id===id) return MAPS[i]; } return MAPS[0]; }
+ok('mapDef returns the requested map', mapDef('beach').id==='beach' && mapDef('beach').label==='Beach');
+ok('mapDef resolves the base map', mapDef('meadow').id==='meadow');
+ok('mapDef falls back to the first map for unknown / null ids', mapDef('atlantis').id==='meadow' && mapDef(null).id==='meadow');
+ok('every map has an id, label and emoji', MAPS.every(function(m){ return !!(m.id && m.label && m.emoji); }));
+ok('at least two maps are selectable', MAPS.length>=2);
+
 // ---- 🏆 scoring (Manager Decision #2) ----
 ok('win score = apples*100 + round(timeLeft*10)', computeScore(16,28.4,'win')===16*100+284);
 ok('a non-win score has no time bonus', computeScore(9,50,'timeup')===900 && computeScore(9,50,'crash')===900);

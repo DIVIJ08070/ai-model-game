@@ -114,6 +114,14 @@ function run(n,lm){ for(let i=0;i<n;i++){ if(lm) feed(lm); upd(16); } }
   if(G.screen!=='lobby') errors.push('did not boot into the lobby (screen='+G.screen+')');
   if(G.control!=='keyboard') errors.push('default control scheme should be keyboard (got '+G.control+')');
 
+  // 1.5) MAP SELECTOR — pick Beach (persists), then back to Green Hills
+  if(G.map!=='meadow') errors.push('default map should be meadow (got '+G.map+')');
+  byId('mapbtn-beach')._fire('click');
+  if(G.map!=='beach') errors.push('selecting Beach did not set G.map (map='+G.map+')');
+  if(store['skydash_map']!=='beach') errors.push('map choice was not persisted to localStorage');
+  byId('mapbtn-meadow')._fire('click');
+  if(G.map!=='meadow') errors.push('selecting Green Hills did not switch back (map='+G.map+')');
+
   // 2) enter CAMERA mode (async: getUserMedia + Pose warm-up)
   byId('playCamBtn')._fire('click');
   for(let i=0;i<25;i++){ await Promise.resolve(); await new Promise(r=>setTimeout(r,0)); }
