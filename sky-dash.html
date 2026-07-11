@@ -972,6 +972,8 @@ if(typeof requestAnimationFrame!=='undefined') requestAnimationFrame(update);
      CDN), the Engine still runs — no render — graceful degrade (SPEC §3.1/§3.2/§8.1). -->
 <script type="module">
 import * as THREE from 'three';
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';   // Beach map: real palm props from the terrain pack
+import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 (function(){
 try{
   /* ---- palette (DESIGN_SPEC §1.2 / §5 / §6 — exact handoff hex) ---- */
@@ -1237,6 +1239,46 @@ try{
     M.rock.color.setHex(th.rock);
     if(hemi) hemi.groundColor.setHex(th.hemiGround);
     curTheme = id;
+    if(id==='beach') ensurePalms();                            // lazy-load the real pack palms for Beach
+    try{ if(typeof scatter!=='undefined' && scatter.length) rebuildScatter(); }catch(e){}
+  }
+
+  /* ---- real terrain-pack palm props (Beach map), lazy-loaded with a procedural fallback ----
+     If OBJ/MTL load fails (offline, missing files) the scatter stays procedural — never breaks. */
+  let palmProtos=[], palmTried=false;
+  function normalizePalm(raw){                                  // scale to a consistent height + base to ground
+    const box=new THREE.Box3().setFromObject(raw); const size=new THREE.Vector3(); box.getSize(size);
+    raw.scale.setScalar(14/(size.y||1));
+    const box2=new THREE.Box3().setFromObject(raw);
+    const wrap=new THREE.Group(); raw.position.y=-box2.min.y; wrap.add(raw);
+    wrap.traverse(o=>{ if(o.isMesh){ o.castShadow=!isCoarse; if(o.material) o.material.flatShading=true; } });
+    return wrap;
+  }
+  function ensurePalms(){
+    if(palmTried) return; palmTried=true;
+    try{
+      ['Prop_Tree_Palm_1','Prop_Tree_Palm_2'].forEach(name=>{
+        const mtl=new MTLLoader(); mtl.setPath('models/beach/');
+        mtl.load(name+'.mtl', mats=>{ try{ mats.preload();
+          const obj=new OBJLoader(); obj.setMaterials(mats); obj.setPath('models/beach/');
+          obj.load(name+'.obj', grp=>{ try{ palmProtos.push(normalizePalm(grp)); rebuildScatter(); }catch(e){} }, undefined, ()=>{});
+        }catch(e){} }, undefined, ()=>{});
+      });
+    }catch(e){}
+  }
+  function scatterItem(i){                                      // rock every 3rd; palm(real if loaded)/tree otherwise
+    if(i%3===0) return buildScatterRock();
+    if(curTheme==='beach' && palmProtos.length) return palmProtos[i%palmProtos.length].clone();
+    return buildSmallTree();
+  }
+  function rebuildScatter(){
+    if(typeof scatter==='undefined' || !scatter.length) return;
+    for(let i=0;i<scatter.length;i++){ const old=scatter[i];
+      const x=old.position.x, z=old.position.z, ry=old.rotation.y, sc=old.scale.x||1;
+      scene.remove(old);
+      const g=scatterItem(i); g.position.set(x, terrainH(x,z), z); g.rotation.y=ry; g.scale.setScalar(sc);
+      scene.add(g); scatter[i]=g;
+    }
   }
 
   /* =================== decorative scatter (trees + rocks on the ground), pooled & recycling =================== */
@@ -1257,7 +1299,7 @@ try{
   }
   const scatter=[]; const NSCAT=18, SCAT_SPAN=560;
   for(let i=0;i<NSCAT;i++){
-    const g=(i%3===0)?buildScatterRock():buildSmallTree();
+    const g=scatterItem(i);
     const side=(i%2)?1:-1, x=side*(20+(i*13)%60), z=i*(SCAT_SPAN/NSCAT);
     g.position.set(x, terrainH(x,z), z); g.rotation.y=i; g.scale.setScalar(0.7+(i%5)*0.12);
     scene.add(g); scatter.push(g);
