@@ -233,9 +233,273 @@
 
 <!-- VIEW — three.js module (T3). PLACEHOLDER. Loaded BEFORE the Engine; the Engine is LAST. -->
 <script type="module">
-/* T3 fills the three.js View here; must set window.__spellRender(dt,t).
-   Placeholder stub (T2): NO three.js yet. The Engine runs standalone without it —
-   its RAF loop calls window.__spellRender only if it has been defined (try/catch). */
+/* ============================== VIEW (T3) ====================================
+   three.js 0.160.0 procedural "mana void" arena. Reads Engine state read-only via
+   window.__spell.G each frame inside window.__spellRender(dt,t); NEVER mutates G.
+   Reuses sky-dash/pose-wall patterns: makeGradientSky / Fog / isCoarse / pixelRatio /
+   shadows-off-on-coarse / resize / try-catch graceful-degrade / camera-follow lerp.
+   Engine coords: x = slot*2 (mage.x, enemy.x in [-2,2]); z = 0 at mage plane, +z
+   downrange (enemies far). World map: worldX = x, worldZ = -z (downrange = -Z),
+   camera behind/above the mage (+Z) looking downrange. §12 + DESIGN §2.3/§11. */
+import * as THREE from 'three';
+(function(){
+try{
+  /* ---- scene palette (DESIGN §2.3 COL — exact handoff hex) ---- */
+  const COL = {
+    sky:[[0.00,'#05060f'],[0.34,'#0d0a24'],[0.60,'#1a1140'],[0.82,'#2a1550'],[1.00,'#3a1a52']],
+    fog:0x140a2e,
+    ground:0x0b0a1a, groundLine:0x2a2350, groundEmis:0x140a2e,
+    mageRobe:0x241d47, mageRobeLit:0x352a63, mageHood:0x5ee0ff, mageHead:0xd8c7a6, mageBelt:0x7c5cff,
+    staffWood:0x4a3826, staffTip:0x5ee0ff, staffGlow:0x9af0ff,
+    enemyBody:0x160c2c, enemyRim:0x7c5cff, enemyEye:0xff3b5c,
+    teleGlow:0xffd23f,
+    eProjLow:0xff3b5c, eProjHigh:0xffd23f,
+    bolt:0x5ee0ff, fireball:0xff8a3c, shield:0x3ef0a0, lightning:0x7c5cff,
+    hemiSky:0x3a2f6b, hemiGround:0x0a0812, key:0xbfa8ff, keyRim:0x5ee0ff
+  };
+  const SPELL_COL = { bolt:COL.bolt, fireball:COL.fireball, shield:COL.shield, lightning:COL.lightning };
+
+  const canvas = document.getElementById('c3d');
+  if(!canvas) return;
+  const isCoarse = (typeof matchMedia==='function') &&
+    (matchMedia('(pointer: coarse)').matches || matchMedia('(max-width: 800px)').matches);
+  const reduceMotion = (typeof matchMedia==='function') && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const clampN = (v,a,b)=> v<a?a:(v>b?b:v);
+  const lerpN  = (a,b,t)=> a+(b-a)*t;
+
+  /* ---- renderer (perf §14: clamp pixel ratio, shadows off on coarse/mobile) ---- */
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias:!isCoarse, powerPreference:'high-performance' });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+  if('outputColorSpace' in renderer) renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.shadowMap.enabled = !isCoarse;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  /* ---- scene, mana sky, fog (DESIGN §2.3) ---- */
+  const scene = new THREE.Scene();
+  function makeGradientSky(stops){
+    const c = document.createElement('canvas'); c.width = 16; c.height = 256;
+    const g = c.getContext('2d'); const grd = g.createLinearGradient(0,0,0,256);
+    stops.forEach(s => grd.addColorStop(s[0], s[1]));
+    g.fillStyle = grd; g.fillRect(0,0,16,256);
+    const tex = new THREE.CanvasTexture(c);
+    if('colorSpace' in tex) tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
+  scene.background = makeGradientSky(COL.sky);
+  scene.fog = new THREE.Fog(COL.fog, 26, isCoarse ? 150 : 210);
+
+  const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 400);
+  camera.position.set(0, 4.6, 8.2);
+
+  /* ---- lighting (DESIGN §11): hemi + violet key (upper-left) + cyan rim (behind) ---- */
+  scene.add(new THREE.HemisphereLight(COL.hemiSky, COL.hemiGround, 0.9));
+  const key = new THREE.DirectionalLight(COL.key, 1.1);
+  key.position.set(-8, 14, 6);
+  if(!isCoarse){
+    key.castShadow = true; key.shadow.mapSize.set(1024,1024);
+    const s = 16;
+    key.shadow.camera.left=-s; key.shadow.camera.right=s; key.shadow.camera.top=s; key.shadow.camera.bottom=-s;
+    key.shadow.camera.near=1; key.shadow.camera.far=60; key.shadow.bias=-0.0006;
+  }
+  scene.add(key); scene.add(key.target);
+  const rim = new THREE.DirectionalLight(COL.keyRim, 0.4);
+  rim.position.set(3, 6, -12);
+  scene.add(rim);
+
+  /* ---- arena: ground plane + faint rune grid + lane rings ---- */
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(140,140),
+    new THREE.MeshStandardMaterial({ color:COL.ground, roughness:0.95, metalness:0.0, emissive:COL.groundEmis, emissiveIntensity:0.25 }));
+  ground.rotation.x = -Math.PI/2; ground.position.y = 0; ground.receiveShadow = !isCoarse;
+  scene.add(ground);
+  const grid = new THREE.GridHelper(140, 70, COL.groundLine, COL.groundLine);
+  grid.position.y = 0.01; grid.material.transparent = true; grid.material.opacity = 0.35;
+  scene.add(grid);
+  for(const lx of [-2,0,2]){
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.68,0.84,24),
+      new THREE.MeshBasicMaterial({ color:COL.staffTip, transparent:true, opacity:0.18, side:THREE.DoubleSide, fog:false }));
+    ring.rotation.x = -Math.PI/2; ring.position.set(lx, 0.02, 0);
+    scene.add(ring);
+  }
+
+  /* ---- MAGE: robed cylinder body + sphere head + hood + belt + glowing staff ---- */
+  function buildMage(){
+    const g = new THREE.Group();
+    const robe = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.92, 1.9, 12),
+      new THREE.MeshStandardMaterial({ color:COL.mageRobe, roughness:0.85, metalness:0.05, flatShading:true, emissive:COL.mageRobe, emissiveIntensity:0.15 }));
+    robe.position.y = 0.95; robe.castShadow = !isCoarse; g.add(robe);
+    const panel = new THREE.Mesh(new THREE.CylinderGeometry(0.30, 0.48, 1.4, 8),
+      new THREE.MeshStandardMaterial({ color:COL.mageRobeLit, roughness:0.8, flatShading:true }));
+    panel.position.set(0, 0.85, 0.24); panel.scale.z = 0.4; g.add(panel);
+    const belt = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.07, 6, 16),
+      new THREE.MeshStandardMaterial({ color:COL.mageBelt, emissive:COL.mageBelt, emissiveIntensity:0.6, roughness:0.5 }));
+    belt.position.y = 1.02; belt.rotation.x = Math.PI/2; g.add(belt);
+    const hood = new THREE.Mesh(new THREE.ConeGeometry(0.44, 0.62, 12, 1, true),
+      new THREE.MeshStandardMaterial({ color:COL.mageHood, emissive:COL.mageHood, emissiveIntensity:0.35, roughness:0.4, side:THREE.DoubleSide }));
+    hood.position.y = 1.98; g.add(hood);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.27, 16, 12),
+      new THREE.MeshStandardMaterial({ color:COL.mageHead, roughness:0.75, flatShading:true }));
+    head.position.y = 2.02; head.castShadow = !isCoarse; g.add(head);
+    const staff = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 2.5, 6),
+      new THREE.MeshStandardMaterial({ color:COL.staffWood, roughness:0.8 }));
+    staff.position.set(0.6, 1.25, 0.18); staff.rotation.z = 0.12; g.add(staff);
+    const tip = new THREE.Mesh(new THREE.OctahedronGeometry(0.17, 0),
+      new THREE.MeshStandardMaterial({ color:COL.staffTip, emissive:COL.staffGlow, emissiveIntensity:1.15, roughness:0.2 }));
+    tip.position.set(0.68, 2.5, 0.18); g.add(tip);
+    const tipLight = new THREE.PointLight(COL.staffGlow, 0.85, 9, 2);
+    tipLight.position.copy(tip.position); g.add(tipLight);
+    g.userData = { tip, tipLight };
+    return g;
+  }
+  const mage = buildMage();
+  scene.add(mage);
+  let mageDip = 0;
+
+  /* ---- pools (fixed size → no per-frame allocation; mobile-light) ---- */
+  function buildEnemy(){
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.IcosahedronGeometry(0.7, 0),
+      new THREE.MeshStandardMaterial({ color:COL.enemyBody, emissive:COL.enemyRim, emissiveIntensity:0.35, roughness:0.6, metalness:0.1, flatShading:true }));
+    body.castShadow = !isCoarse; g.add(body);
+    const eyeMat = new THREE.MeshStandardMaterial({ color:COL.enemyEye, emissive:COL.enemyEye, emissiveIntensity:0.9, roughness:0.4 });
+    const eL = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6), eyeMat); eL.position.set(-0.22, 0.08, 0.58);
+    const eR = eL.clone(); eR.position.x = 0.22;
+    g.add(eL, eR);
+    g.userData = { body }; g.visible = false;
+    return g;
+  }
+  function buildEProj(){
+    const m = new THREE.Mesh(new THREE.SphereGeometry(0.32, 12, 10),
+      new THREE.MeshStandardMaterial({ color:COL.eProjLow, emissive:COL.eProjLow, emissiveIntensity:1.0, roughness:0.3, fog:false }));
+    m.visible = false; return m;
+  }
+  function buildSpell(){
+    const m = new THREE.Mesh(new THREE.SphereGeometry(0.3, 12, 10),
+      new THREE.MeshStandardMaterial({ color:COL.bolt, emissive:COL.bolt, emissiveIntensity:1.25, roughness:0.25, fog:false }));
+    m.visible = false; return m;
+  }
+  const ENEMY_POOL=16, EPROJ_POOL=28, SPELL_POOL=12;
+  const enemyPool=[], eProjPool=[], spellPool=[];
+  for(let i=0;i<ENEMY_POOL;i++){ const m=buildEnemy(); scene.add(m); enemyPool.push(m); }
+  for(let i=0;i<EPROJ_POOL;i++){ const m=buildEProj(); scene.add(m); eProjPool.push(m); }
+  for(let i=0;i<SPELL_POOL;i++){ const m=buildSpell(); scene.add(m); spellPool.push(m); }
+
+  /* ---- Shield: translucent green hemisphere in front of the mage ---- */
+  const shield = new THREE.Mesh(
+    new THREE.SphereGeometry(1.55, 22, 12, 0, Math.PI*2, 0, Math.PI/2),
+    new THREE.MeshStandardMaterial({ color:COL.shield, emissive:COL.shield, emissiveIntensity:0.5, transparent:true, opacity:0.28, side:THREE.DoubleSide, roughness:0.2, fog:false }));
+  shield.visible = false; scene.add(shield);
+
+  /* ---- third-person follow camera (behind/above the mage, looking downrange) ---- */
+  const camPos = new THREE.Vector3(0, 4.6, 8.2), camLook = new THREE.Vector3(0, 1.4, -14);
+  const _tp = new THREE.Vector3(), _tl = new THREE.Vector3();
+  function updateCamera(gx, dt){
+    _tp.set(gx*0.6, 4.6, 8.2);        // trail behind & above the mage; slight lateral sway
+    _tl.set(gx*0.35, 1.5, -14);       // look downrange at the enemies
+    const a = 1 - Math.pow(0.0016, Math.min(dt, 0.05));   // frame-rate-independent lerp
+    camPos.lerp(_tp, a); camLook.lerp(_tl, a);
+    camera.position.copy(camPos); camera.lookAt(camLook);
+  }
+
+  /* =================== render hook the Engine calls each frame =================== */
+  window.__spellRender = function(dt, t){
+    try{
+      dt = Math.min(dt||0.016, 0.05);
+      const SK = window.__spell || {}; const G = SK.G;
+      if(!G){ renderer.render(scene, camera); return; }
+
+      // MAGE — strafe to mage.x (Engine already lerps slot→x); dip on ducking
+      mage.position.x = G.mage ? G.mage.x : 0;
+      const duckTarget = (G.mage && G.mage.ducking) ? -0.55 : 0;
+      mageDip += (duckTarget - mageDip) * Math.min(1, dt*12);
+      mage.position.y = mageDip;
+      mage.scale.set(1, 1 + mageDip*0.28, 1);
+      if(!reduceMotion && mage.userData.tip){       // "alive" staff-crystal pulse
+        const p = 1 + Math.sin(t*3)*0.12;
+        mage.userData.tip.material.emissiveIntensity = 1.05*p;
+        mage.userData.tip.rotation.y += dt*1.2;
+      }
+
+      // ENEMIES — float, bob, telegraph glow (brighter/faster as it winds up)
+      const es = G.enemies || [];
+      for(let i=0;i<enemyPool.length;i++){
+        const m = enemyPool[i], e = es[i];
+        if(!e || e.hp<=0 || e.state==='dead'){ m.visible=false; continue; }
+        m.visible = true;
+        const bob = reduceMotion ? 0 : Math.sin(t*1.6 + (e.seed||0)*6.283)*0.18;
+        m.position.set(e.x, 2.9 + bob, -e.z);
+        const bm = m.userData.body.material;
+        if(e.state==='telegraph'){
+          const p = clampN((e.tele||0)/1.2, 0, 1);
+          bm.emissive.setHex(COL.teleGlow);
+          bm.emissiveIntensity = 0.5 + p*1.6;
+          m.scale.setScalar(reduceMotion ? 1 : (1 + Math.sin(t*18)*0.08*p));
+          m.userData.body.rotation.y += dt*1.6;
+        } else {
+          bm.emissive.setHex(COL.enemyRim);
+          bm.emissiveIntensity = 0.35;
+          m.scale.setScalar(1);
+          m.userData.body.rotation.y += dt*0.4;
+        }
+      }
+
+      // ENEMY PROJECTILES — red = strafe/lane (low), amber = duck (high); down-lane
+      const ep = G.eProj || [];
+      for(let i=0;i<eProjPool.length;i++){
+        const m = eProjPool[i], p = ep[i];
+        if(!p || p.dead){ m.visible=false; continue; }
+        m.visible = true;
+        m.position.set(p.x, p.high ? 2.55 : 1.2, -p.z);
+        const c = p.high ? COL.eProjHigh : COL.eProjLow;
+        m.material.color.setHex(c); m.material.emissive.setHex(c);
+        m.scale.setScalar(reduceMotion ? 1 : (1 + Math.sin(t*20 + i)*0.12));
+      }
+
+      // PLAYER SPELLS — emissive, per-element color; travel mage→target (t:0..0.6)
+      const sp = G.spells || [];
+      for(let i=0;i<spellPool.length;i++){
+        const m = spellPool[i], s = sp[i];
+        if(!s || s.kind==='shield'){ m.visible=false; continue; }   // shield = hemisphere, not a bolt
+        m.visible = true;
+        const frac = clampN((s.t||0)/0.6, 0, 1);
+        const sx = lerpN(s.x, s.tx, frac);
+        const sz = lerpN(0, s.tz, frac);
+        const y  = 1.95 + Math.sin(frac*Math.PI)*0.6;                // gentle arc downrange
+        m.position.set(sx, y, -sz);
+        const c = SPELL_COL[s.kind] || COL.bolt;
+        m.material.color.setHex(c); m.material.emissive.setHex(c);
+        let base = 1;
+        if(s.kind==='fireball') base = 1.55; else if(s.kind==='bolt') base = 0.72; else if(s.kind==='lightning') base = 0.95;
+        m.scale.setScalar(base * (reduceMotion ? 1 : (1 + Math.sin(t*30 + i)*0.1)));
+      }
+
+      // SHIELD hemisphere in front of the mage while G.shield
+      if(G.shield){
+        shield.visible = true;
+        shield.position.set(mage.position.x, 0.12 + mage.position.y, -1.65);
+        shield.scale.setScalar(reduceMotion ? 1 : (1 + Math.sin(t*6)*0.04));
+      } else shield.visible = false;
+
+      updateCamera(G.mage ? G.mage.x : 0, dt);
+      renderer.render(scene, camera);
+    }catch(e){ /* never throw back into the Engine loop */ }
+  };
+
+  /* ---- resize (perf §14) ---- */
+  function onResize(){
+    const w = window.innerWidth, h = window.innerHeight;
+    camera.aspect = w/h; camera.updateProjectionMatrix();
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
+    renderer.setSize(w, h, false);
+  }
+  window.addEventListener('resize', onResize);
+}catch(err){
+  /* View failed to init (e.g. WebGL unavailable / CDN offline) — the Engine keeps
+     running with no 3D render (graceful degrade). SPEC §3.3 / §14. */
+  try{ console.warn('[spell-caster view] disabled:', err && err.message); }catch(e){}
+}
+})();
 </script>
 
 <!-- ENGINE — classic script, no three.js (placed LAST). Smoke test extracts the block below by its sentinel. -->
