@@ -194,6 +194,11 @@
     <div class="card">
       <h1 class="title"><span class="a">SKY</span><span class="b">DASH</span></h1>
       <div class="sub">Flap your arms like wings to fly. Strike a &#129485; T-pose (or press Play) to take off.</div>
+      <div class="sub" style="margin:6px 0 4px;font-weight:900;opacity:.7;font-size:11px;text-transform:uppercase;letter-spacing:1.5px">Choose your map</div>
+      <div id="mapSel" style="display:flex;gap:8px;margin:0 0 12px">
+        <button class="mapbtn" id="mapbtn-meadow" type="button" style="flex:1;padding:10px 8px;border-radius:12px;border:2px solid var(--lane);background:rgba(94,224,255,0.16);box-shadow:0 0 14px rgba(94,224,255,0.4);color:var(--ink);font-family:inherit;font-weight:900;font-size:14px;cursor:pointer">&#9925; Green Hills</button>
+        <button class="mapbtn" id="mapbtn-beach" type="button" style="flex:1;padding:10px 8px;border-radius:12px;border:2px solid rgba(94,224,255,0.3);background:rgba(5,7,15,0.4);color:var(--ink);font-family:inherit;font-weight:900;font-size:14px;cursor:pointer">&#127965;&#65039; Beach</button>
+      </div>
       <button class="btn" id="playKeysBtn">&#9654; Play (keyboard)</button>
       <div class="ctarow"><button class="btn ghost" id="playCamBtn">&#128247; Camera</button></div>
       <div id="camMsg" class="sub" style="text-align:center;color:var(--warn);min-height:1px;margin:10px 0 0"></div>
@@ -404,6 +409,15 @@ function computeScore(applesCollected, timeLeft, outcome){
   return applesCollected*100 + (outcome==='win'?Math.round(timeLeft*10):0);
 }
 
+/* ================================ maps (selectable themes) ==================== */
+/* Pure map registry — id/label/emoji only (the visual palette lives in the View's THEMES,
+   keyed by the same id). Mirrored into tests/sky-dash.logic.test.js. */
+var MAPS=[
+  { id:'meadow', label:'Green Hills', emoji:'⛰️' },
+  { id:'beach',  label:'Beach',       emoji:'🏝️' }
+];
+function mapDef(id){ for(var i=0;i<MAPS.length;i++){ if(MAPS[i].id===id) return MAPS[i]; } return MAPS[0]; }
+
 /* ================================ world / level =============================== */
 /* Authoritative terrain height (the View renders to match; the engine owns crashes). */
 function groundYAt(x,z){ return 6 + 3*Math.sin(z*0.02) + 2*Math.cos(x*0.05 + z*0.013); }
@@ -412,6 +426,7 @@ function groundYAt(x,z){ return 6 + 3*Math.sin(z*0.02) + 2*Math.cos(x*0.05 + z*0
 var G={
   screen:'lobby',          // 'lobby' | 'play' | 'over'
   control:'keyboard',      // 'camera' | 'keyboard'
+  map:'meadow',            // selected map/theme id (see MAPS; the View themes to match)
   running:false,
   best:0, score:0, newBest:false,
   bird:null,               // {x,y,z,vx,vy,vz,roll,pitch,speed}
@@ -611,6 +626,16 @@ function shouldRunTutorial(){
   try{ return localStorage.getItem('skydash_tut_done')!=='1'; }catch(e){ return false; }
 }
 function afterCalibration(){ if(shouldRunTutorial()) startTutorial(); else startGame(); }
+/* ---- map selection (lobby) — persisted; the View re-themes reactively from G.map ---- */
+function setMap(id){ G.map=mapDef(id).id; try{ localStorage.setItem('skydash_map',G.map); }catch(e){} renderMapSel(); }
+function renderMapSel(){
+  for(var i=0;i<MAPS.length;i++){ var b=$('mapbtn-'+MAPS[i].id); if(!b) continue;
+    var on=(MAPS[i].id===G.map);
+    if(b.classList) b.classList.toggle('active', on);
+    if(b.style){ b.style.borderColor=on?'var(--lane)':'rgba(94,224,255,0.3)';
+      b.style.background=on?'rgba(94,224,255,0.16)':'rgba(5,7,15,0.4)';
+      b.style.boxShadow=on?'0 0 14px rgba(94,224,255,0.4)':'none'; } }
+}
 function startWithScheme(s){ audioOn(); if(s!=='camera' && G.cam.on) teardownCamera(); G.control=s; startGame(); }
 function startGame(){
   G.screen='play'; G.running=true; G.outcome=null; G.newBest=false;
@@ -916,6 +941,9 @@ function initInput(){
 function initDom(){
   G.cam.video=$('cam');
   try{ G.best=parseInt((localStorage.getItem('skydash_best')||'0'),10)||0; }catch(e){ G.best=0; }
+  try{ var sm=localStorage.getItem('skydash_map'); if(sm) G.map=mapDef(sm).id; }catch(e){}
+  for(var mi=0;mi<MAPS.length;mi++){ (function(id){ wire('mapbtn-'+id,'click',function(){ setMap(id); }); })(MAPS[mi].id); }
+  renderMapSel();
   wire('playKeysBtn','click',function(){ startWithScheme('keyboard'); });
   wire('playCamBtn','click',function(){ startCameraFlow(); });
   wire('againBtn','click',function(){ startGame(); });
@@ -936,7 +964,7 @@ if(typeof requestAnimationFrame!=='undefined') requestAnimationFrame(update);
   applyCeiling:applyCeiling, appleCollected:appleCollected, isCrash:isCrash, isTpose:isTpose,
   computeScore:computeScore, flap:flap, startWithScheme:startWithScheme, beginCalibration:beginCalibration,
   startTutorial:startTutorial, skipTutorial:tutSkip, tutStartGame:tutStartGame, stepTutorial:stepTutorial,
-  groundYAt:groundYAt }; }catch(e){}
+  groundYAt:groundYAt, MAPS:MAPS, mapDef:mapDef, setMap:setMap }; }catch(e){}
 </script>
 
 <!-- VIEW — three.js module (T3). Loaded after the Engine. Contains ALL three.js; reads the
@@ -956,6 +984,18 @@ try{
     birdBody:0x22c3d6, birdWing:0x1aa7ba, birdBelly:0xff9e5c, birdBeak:0xffd23f, birdEye:0x0b1020,
     appleBody:0xff3b4d, appleEmissive:0xe0223a, appleLeaf:0x3ef0a0, appleHalo:0xffd23f,
     sun:0xfff4d6, hemiSky:0x9fbfe0, hemiGround:0x3f6b45
+  };
+
+  /* selectable map themes (keyed by the Engine's G.map / MAPS ids). applyTheme() recolors the
+     shared ground palette + materials + sky/fog live, so switching maps needs no rebuild. */
+  const THEMES = {
+    meadow: { sky:COL.sky, fog:COL.fog, grass:COL.grass, grassLit:COL.grassLit, grassShade:COL.grassShade,
+      mtnRock:COL.mtnRock, treeTrunk:COL.treeTrunk, treeFoliage:COL.treeFoliage, rock:COL.rock, hemiGround:COL.hemiGround },
+    beach: { // warm tropical: sand ground, palm greens, hazy sea sky
+      sky:[[0.00,'#123a6b'],[0.36,'#2f78bf'],[0.66,'#8fd0e6'],[0.86,'#ffe6b0'],[1.00,'#ffcf8a']],
+      fog:0xdfe7dc,
+      grass:0xe6c583, grassLit:0xf6e6b4, grassShade:0xcaa15f,
+      mtnRock:0xcaa878, treeTrunk:0x9a6b3f, treeFoliage:0x4fa85f, rock:0xc7b48a, hemiGround:0xcaa15f }
   };
 
   const canvas = document.getElementById('c3d');
@@ -1183,6 +1223,22 @@ try{
     }
   }
 
+  /* re-theme the whole world to match G.map (called reactively when the selected map changes). */
+  let curTheme = null;
+  function applyTheme(id){
+    const th = THEMES[id] || THEMES.meadow;
+    cShade.set(th.grassShade); cBase.set(th.grass); cLit.set(th.grassLit);
+    for(const t of tiles) sampleTile(t);                       // recolor ground vertices
+    scene.background = makeGradientSky(th.sky);
+    if(scene.fog) scene.fog.color.setHex(th.fog);
+    M.mtnRock.color.setHex(th.mtnRock);
+    M.treeTrunk.color.setHex(th.treeTrunk);
+    M.treeFoliage.color.setHex(th.treeFoliage);
+    M.rock.color.setHex(th.rock);
+    if(hemi) hemi.groundColor.setHex(th.hemiGround);
+    curTheme = id;
+  }
+
   /* =================== decorative scatter (trees + rocks on the ground), pooled & recycling =================== */
   function buildSmallTree(){
     const g=new THREE.Group();
@@ -1351,6 +1407,8 @@ try{
       dt = Math.min(dt||0.016, 0.05);
       const SK = window.__sky || {}; const G = SK.G || window.G;
       if(!G){ renderer.render(scene,camera); return; }
+
+      if((G.map||'meadow') !== curTheme) applyTheme(G.map||'meadow');   // re-theme when the map changes
 
       let refZ;
       if(G.bird){ refZ = G.bird.z; } else { idleZ += dt*8; refZ = idleZ; }
