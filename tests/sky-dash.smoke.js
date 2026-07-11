@@ -64,9 +64,12 @@ function flapPose(up){ const lm=bodyLandmarks(0.5,0.62);   // both wrists high (
   const wy=up?0.16:0.60;
   lm[15]={x:0.30,y:wy,visibility:1}; lm[16]={x:0.70,y:wy,visibility:1};
   return lm; }
-function bankPose(){ const lm=bodyLandmarks(0.5,0.62);      // LEFT hand high, RIGHT hand low → raiseL>raiseR
+function bankPose(){ const lm=bodyLandmarks(0.5,0.62);      // LEFT hand high, RIGHT hand low → raiseL>raiseR (lean-right)
   lm[15]={x:0.22,y:0.18,visibility:1};
   lm[16]={x:0.78,y:0.58,visibility:1};
+  return lm; }
+function restPose(){ const lm=bodyLandmarks(0.5,0.62);      // relaxed arms partway down → avgRaise ≈ -0.5 (< CALIB_RELAX, above the dive pose)
+  lm[15]={x:0.42,y:0.52,visibility:1}; lm[16]={x:0.58,y:0.52,visibility:1};
   return lm; }
 let CURRENT_LM=bodyLandmarks(0.5,0.62);
 
@@ -118,7 +121,7 @@ function run(n,lm){ for(let i=0;i<n;i++){ if(lm) feed(lm); upd(16); } }
   feed(tposeLandmarks());
   if(!G.cam.tpose) errors.push('T-pose not recognised in the lobby');
   let guard=0;
-  while(G.screen!=='play' && guard++<200){ feed(tposeLandmarks()); upd(16); }
+  while(G.screen!=='play' && guard++<400){ feed(G.screen==='calib'?restPose():tposeLandmarks()); upd(16); }   // T-pose→calib(relax)→play
   if(G.screen!=='play') errors.push('holding a T-pose did not start the game (screen='+G.screen+')');
   if(!G.running) errors.push('game did not enter the running state');
   if(G.apples.length!==16) errors.push('level did not scatter exactly 16 apples ('+G.apples.length+')');
@@ -133,11 +136,11 @@ function run(n,lm){ for(let i=0;i<n;i++){ if(lm) feed(lm); upd(16); } }
   feed(flapPose(false)); upd(16);         // arms down → down-stroke → lift
   if(!(G.bird.vy>vyBefore)) errors.push('a wing down-stroke did not add lift (vy '+vyBefore.toFixed(2)+'→'+G.bird.vy.toFixed(2)+')');
 
-  // 4a) bank: raiseL>raiseR ⇒ steer RIGHT (positive turn ⇒ x increases) — the documented convention
+  // 4a) bank: lean-right (raiseL>raiseR) ⇒ steer RIGHT (positive turn ⇒ x DECREASES = screen-right = world −x)
   G.bird.x=0; G.bird.vx=0;
   run(24, bankPose());
-  if(!(G.controls.turn>0)) errors.push('bank convention broken: raiseL>raiseR should give turn>0 (got '+G.controls.turn.toFixed(2)+')');
-  if(!(G.bird.x>0.1)) errors.push('raiseL>raiseR did not steer the bird RIGHT (x='+G.bird.x.toFixed(2)+')');
+  if(!(G.controls.turn>0)) errors.push('bank convention broken: lean-right (raiseL>raiseR) should give turn>0 (got '+G.controls.turn.toFixed(2)+')');
+  if(!(G.bird.x<-0.1)) errors.push('lean-right did not steer the bird RIGHT (x='+G.bird.x.toFixed(2)+')');
 
   // 4b) pitch: arms-up = climb (slower), arms-down = dive (faster)
   run(12, flapPose(true));  const speedClimb=G.bird.speed;
@@ -153,18 +156,21 @@ function run(n,lm){ for(let i=0;i<n;i++){ if(lm) feed(lm); upd(16); } }
   if(G.applesCollected!==collectedBefore+1) errors.push('flying into an apple did not collect it ('+collectedBefore+'→'+G.applesCollected+')');
   if(byId('appleV').textContent!==G.applesCollected+'/16') errors.push('apple HUD did not update (text='+byId('appleV').textContent+')');
 
-  // 6) WIN: collecting the 16th apple ends the run with outcome 'win' + a score
+  // 6) ENDLESS: collecting the 16th apple does NOT end the run; the round ends on TIMEOUT with a score
   G.applesCollected=15; G.apples=[{x:G.bird.x,y:G.bird.y,z:G.bird.z,collected:false,seed:0,popT:0}];
   upd(16);
-  if(G.screen!=='over') errors.push('collecting all 16 apples did not end the run (screen='+G.screen+')');
-  if(G.outcome!=='win') errors.push('all-16 outcome was not a win (outcome='+G.outcome+')');
-  if(!(G.score>=1600)) errors.push('win score missing the apple/time payout (score='+G.score+')');
-  if(byId('overTitleA').textContent!=='YOU') errors.push('win over-screen title not set (A='+byId('overTitleA').textContent+')');
+  if(G.screen!=='play') errors.push('collecting the 16th apple must NOT end the endless run (screen='+G.screen+')');
+  if(G.applesCollected!==16) errors.push('the 16th apple did not count in endless mode ('+G.applesCollected+')');
+  G.timeLeft=0.01; upd(16);
+  if(G.screen!=='over') errors.push('timeout did not end the run (screen='+G.screen+')');
+  if(G.outcome!=='timeup') errors.push('run end outcome was not timeup (outcome='+G.outcome+')');
+  if(!(G.score>=1600)) errors.push('score missing the apple payout (score='+G.score+')');
+  if(byId('overTitleA').textContent!=='TIME') errors.push('timeout over-screen title not set (A='+byId('overTitleA').textContent+')');
   if(store['skydash_best']===undefined) errors.push('best score was not persisted to localStorage');
 
   // 7) T-pose restart from the over screen → back to play, fresh run
   feed(tposeLandmarks()); guard=0;
-  while(G.screen!=='play' && guard++<200){ feed(tposeLandmarks()); upd(16); }
+  while(G.screen!=='play' && guard++<400){ feed(G.screen==='calib'?restPose():tposeLandmarks()); upd(16); }   // T-pose→calib(relax)→play
   if(G.screen!=='play') errors.push('T-pose did not restart from the over screen (screen='+G.screen+')');
   if(G.applesCollected!==0) errors.push('restart did not reset the apple count (got '+G.applesCollected+')');
 
@@ -183,7 +189,7 @@ function run(n,lm){ for(let i=0;i<n;i++){ if(lm) feed(lm); upd(16); } }
   const vyPre=G.bird.vy; S.flap(); upd(16);
   if(!(G.bird.vy>vyPre)) errors.push('keyboard flap did not add lift (vy '+vyPre.toFixed(2)+'→'+G.bird.vy.toFixed(2)+')');
   G.bird.x=0; G.bird.vx=0; G.keys.right=true; run(20); G.keys.right=false;
-  if(!(G.bird.x>0.1)) errors.push('keyboard bank-right did not steer right (x='+G.bird.x.toFixed(2)+')');
+  if(!(G.bird.x<-0.1)) errors.push('keyboard bank-right did not steer right (x='+G.bird.x.toFixed(2)+')');
   const spNeutral=G.bird.speed; G.keys.dive=true; run(6); G.keys.dive=false;
   if(!(G.bird.speed>spNeutral)) errors.push('keyboard dive did not speed up ('+spNeutral.toFixed(1)+' vs '+G.bird.speed.toFixed(1)+')');
   if(!(G.bird.z>zStart)) errors.push('keyboard play did not auto-fly forward (z did not advance)');

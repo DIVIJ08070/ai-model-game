@@ -59,11 +59,16 @@
   #nextPose{ width:48px; height:48px; display:block; }
   #nextPoseName{ font-size:10px; font-weight:800; color:var(--good); letter-spacing:0.4px; max-width:76px; text-align:center; line-height:1.1; }
 
-  /* ---- [ARCADE] webcam panel (DESIGN_SPEC §7) ---- */
-  #camWrap{ position:absolute; right:12px; bottom:12px; z-index:9; width:132px; height:99px; border-radius:12px; overflow:hidden;
-    border:2px solid rgba(94,224,255,0.55); box-shadow:0 6px 18px rgba(0,0,0,0.5); background:#05070f; }
+  /* ---- [ARCADE] webcam panel (DESIGN_SPEC §7) — enlarged, neon-bordered "YOU" PIP ---- */
+  #camWrap{ position:absolute; right:14px; bottom:14px; z-index:9; width:196px; height:147px; border-radius:16px; overflow:hidden;
+    border:3px solid rgba(94,224,255,0.9); box-shadow:0 0 22px rgba(94,224,255,0.5), 0 8px 22px rgba(0,0,0,0.55); background:#05070f;
+    animation:camGlow 2.6s ease-in-out infinite; }
+  @keyframes camGlow{ 0%,100%{ box-shadow:0 0 16px rgba(94,224,255,0.4), 0 8px 22px rgba(0,0,0,0.55);} 50%{ box-shadow:0 0 30px rgba(94,224,255,0.72), 0 8px 22px rgba(0,0,0,0.55);} }
   #cam,#camOverlay{ position:absolute; inset:0; width:100%; height:100%; }
   #cam{ object-fit:cover; transform:scaleX(-1); }
+  #camTag{ position:absolute; top:7px; left:9px; z-index:2; font-size:12px; font-weight:900; letter-spacing:1.5px;
+    color:#04101e; background:linear-gradient(180deg,#8ffce0,#3ef0a0); padding:2px 10px; border-radius:9px;
+    box-shadow:0 2px 6px rgba(0,0,0,0.45); pointer-events:none; }
 
   /* ---- [ARCADE] screens (DESIGN_SPEC §2) + [NEW] violet re-tint ---- */
   .screen{ position:absolute; inset:0; z-index:20; display:flex; align-items:center; justify-content:center; padding:20px; text-align:center;
@@ -102,14 +107,17 @@
     #streakV, #nextPoseName{ font-size:9px; }
     #backLink{ padding:10px 12px; }
   }
-  @media (min-width:768px){ #camWrap{ width:160px; height:120px; } #nextPose{ width:52px; height:52px; } }
-  @media (min-width:1280px){ #nextPose{ width:56px; height:56px; } }
+  /* keep the PIP off the bottom-center match meter on narrow screens (lift it above) */
+  @media (max-width:600px){ #camWrap{ width:126px; height:95px; bottom:74px; } #camTag{ font-size:10px; padding:1px 7px; } }
+  @media (min-width:768px){ #camWrap{ width:212px; height:159px; } #nextPose{ width:52px; height:52px; } }
+  @media (min-width:1280px){ #camWrap{ width:236px; height:177px; } #nextPose{ width:56px; height:56px; } }
   @media (max-height:420px){ #camWrap{ bottom:64px; } }
 
   /* ---- [NEW] reduced motion (DESIGN_SPEC §11) ---- */
   @media (prefers-reduced-motion: reduce){
     #streakV.pop, #livesV.hit{ animation:none; }
     #matchFill{ transition:none; }
+    #camWrap{ animation:none; }
   }
 </style>
 </head>
@@ -123,7 +131,8 @@
   <!-- webcam panel: hidden <video> frame source + skeleton overlay (SPEC §8 / DESIGN_SPEC §7) -->
   <div id="camWrap" class="hidden">
     <video id="cam" playsinline muted autoplay></video>
-    <canvas id="camOverlay" width="132" height="99" aria-hidden="true"></canvas>
+    <canvas id="camOverlay" width="264" height="198" aria-hidden="true"></canvas>
+    <div id="camTag">YOU</div>
   </div>
 
   <!-- in-game HUD: score / lives / streak (DESIGN_SPEC §4.1) -->
@@ -251,7 +260,14 @@ try{
 
   /* ---- depth/figure constants ---- */
   const SPAWN_DIST=60, FAR_Z=88, FIG_SCALE=1.3, FIG_CY=3.2, FLOOR_Y=-1.5, WALL_W=14, WALL_H=9;
+  const PASS=0.72;   // pose-match pass threshold (mirrors the Engine; drives avatar/silhouette feedback)
   const distToZ = d => -(clamp(d,0,SPAWN_DIST)/SPAWN_DIST)*FAR_Z;   // dist 60(far) → -88 ; 0(impact) → 0
+  const lerpN=(a,b,t)=>a+(b-a)*t;
+
+  /* ---- bright fill lights aimed at the player avatar so YOU read clearly (the neon world is basic/emissive
+       and ignores lights, so this only pops the standard-material character). ---- */
+  const avatarKey = new THREE.PointLight(0xbfe9ff, 1.15, 46, 2.0); avatarKey.position.set(0, FIG_CY+3.5, 9); scene.add(avatarKey);
+  const avatarRim = new THREE.PointLight(0x9b6bff, 0.65, 34, 2.0); avatarRim.position.set(-4.5, FIG_CY+1.5, -3); scene.add(avatarRim);
 
   /* =============================== world dressing (DESIGN_SPEC §9) =============================== */
   // dark floor slab
@@ -311,19 +327,76 @@ try{
   }
   function visOK(lm,i){ return !!(lm && lm[i] && (lm[i].visibility===undefined || lm[i].visibility>=0.5)); }
 
+  // soft radial aura texture for the avatar glow
+  const glowTex = radialTex([[0,'rgba(255,255,255,0.95)'],[0.35,'rgba(255,255,255,0.4)'],[1,'rgba(255,255,255,0)']]);
+  // floating text label ("YOU") as a camera-facing sprite
+  function makeTagSprite(txt){
+    const c=document.createElement('canvas'); c.width=256; c.height=128;
+    const g=c.getContext('2d');
+    if(g){ g.clearRect(0,0,256,128); g.font='800 74px Trebuchet MS, sans-serif'; g.textAlign='center'; g.textBaseline='middle';
+      g.lineWidth=12; g.lineJoin='round'; g.strokeStyle='rgba(4,10,24,0.92)'; g.strokeText(txt,128,66);
+      g.fillStyle='#eafcff'; g.fillText(txt,128,64); }
+    const t=new THREE.CanvasTexture(c); if('colorSpace' in t) t.colorSpace=THREE.SRGBColorSpace;
+    const s=new THREE.Sprite(new THREE.SpriteMaterial({ map:t, transparent:true, depthWrite:false, depthTest:false, fog:false }));
+    s.renderOrder=998; return s;
+  }
+
+  /* Builds a landmark-driven figure. character:true → a chunky, LIT, glowing humanoid (the player
+     avatar: capsule limbs via cylinder shafts + sphere joints, mitt hands, block feet, a face, a soft
+     aura + a "YOU" tag). Otherwise → a flat neon figure (wire:true renders it as a hologram outline,
+     used for the target "hole" so YOU vs the GOAL read as clearly different things). */
   function makeFigure(o){
     const group = new THREE.Group();
-    const mat = new THREE.MeshBasicMaterial({ color:o.color, transparent:true, opacity:o.opacity });
+    const character = !!o.character;
+    const mat = character
+      ? new THREE.MeshStandardMaterial({ color:o.color, emissive:o.color, emissiveIntensity:0.6,
+          roughness:0.3, metalness:0.12, transparent:true, opacity:o.opacity })
+      : new THREE.MeshBasicMaterial({ color:o.color, transparent:true, opacity:o.opacity, wireframe:!!o.wire });
     mat.toneMapped=false;
-    const boneGeo = new THREE.CylinderGeometry(o.boneR,o.boneR,1,6);
-    const jointGeo = new THREE.SphereGeometry(o.jointR,8,6);
-    const headGeo = new THREE.SphereGeometry(o.headR,12,10);
+    const seg = character?12:6;
+    const boneGeo  = new THREE.CylinderGeometry(o.boneR, o.boneR, 1, seg);
+    const torsoGeo = character ? new THREE.CylinderGeometry(o.boneR*1.05, o.boneR*2.0, 1, 14) : boneGeo;
+    const jointGeo = new THREE.SphereGeometry(o.jointR, character?14:8, character?12:6);
+    const headGeo  = new THREE.SphereGeometry(o.headR, character?18:12, character?16:10);
+    const geos = [boneGeo,jointGeo,headGeo];
     const bones = {};
-    ARM_BONES.concat([['torso',0,0]]).concat(LEG_BONES).forEach(d=>{ const m=new THREE.Mesh(boneGeo,mat); group.add(m); bones[d[0]]=m; });
+    ARM_BONES.forEach(d=>{ const m=new THREE.Mesh(boneGeo,mat); group.add(m); bones[d[0]]=m; });
+    { const m=new THREE.Mesh(torsoGeo,mat); group.add(m); bones.torso=m; if(character) geos.push(torsoGeo); }
+    LEG_BONES.forEach(d=>{ const m=new THREE.Mesh(boneGeo,mat); group.add(m); bones[d[0]]=m; });
     const joints = {};
     JOINT_IDS.forEach(i=>{ const m=new THREE.Mesh(jointGeo,mat); group.add(m); joints[i]=m; });
     const head = new THREE.Mesh(headGeo,mat); group.add(head);
-    return { group, mat, bones, joints, head, geos:[boneGeo,jointGeo,headGeo] };
+    const fig = { group, mat, bones, joints, head, geos, character };
+    if(character){
+      // hands = big mitts at the wrists; feet = blocks at the ankles (replace the plain joint spheres there)
+      const handGeo = new THREE.SphereGeometry(o.jointR*1.55, 14, 12);
+      const footGeo = new THREE.BoxGeometry(o.boneR*2.6, o.boneR*1.3, o.boneR*3.8);
+      geos.push(handGeo, footGeo);
+      fig.hands = { 15:new THREE.Mesh(handGeo,mat), 16:new THREE.Mesh(handGeo,mat) };
+      fig.feet  = { 27:new THREE.Mesh(footGeo,mat), 28:new THREE.Mesh(footGeo,mat) };
+      group.add(fig.hands[15],fig.hands[16],fig.feet[27],fig.feet[28]);
+      // a friendly face pinned to the head (fixed toward +z / the camera; the head only translates)
+      const eyeMat = new THREE.MeshBasicMaterial({ color:0x06101f }); eyeMat.toneMapped=false;
+      const eyeGeo = new THREE.SphereGeometry(o.headR*0.18, 10, 8); geos.push(eyeGeo);
+      const eyeL = new THREE.Mesh(eyeGeo,eyeMat), eyeR = new THREE.Mesh(eyeGeo,eyeMat);
+      eyeL.position.set(-o.headR*0.38, o.headR*0.14, o.headR*0.9);
+      eyeR.position.set( o.headR*0.38, o.headR*0.14, o.headR*0.9);
+      head.add(eyeL,eyeR); fig.eyeMat=eyeMat;
+      // soft aura behind the body so the avatar glows and pops off the dark tunnel
+      const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map:glowTex, color:o.color,
+        transparent:true, opacity:0.28, blending:THREE.AdditiveBlending, depthWrite:false, fog:false }));
+      glow.position.set(0, FIG_SCALE*0.2, -0.35); glow.scale.set(3.6, 4.9, 1); group.add(glow); fig.glow=glow;
+      // "YOU" tag floating above the head
+      const tag = makeTagSprite('YOU'); tag.position.set(0, FIG_SCALE*1.95, 0); tag.scale.set(1.9, 0.95, 1);
+      group.add(tag); fig.tag=tag;
+    }
+    return fig;
+  }
+  // place a block foot at the ankle, nudged forward (+z, toward the viewer) and slightly down
+  function placeFoot(foot, ankle){
+    if(!foot) return;
+    if(!ankle){ foot.visible=false; return; }
+    foot.visible=true; foot.position.set(ankle.x, ankle.y-0.07, ankle.z+0.18);
   }
   function figNorm(lm){
     if(!lm||!lm[11]||!lm[12]||!lm[23]||!lm[24]) return null;
@@ -346,6 +419,11 @@ try{
     orientBone(fig.bones.torso, new THREE.Vector3(0,0,0), midSh);
     fig.head.position.copy(v[0] || midSh.clone().add(new THREE.Vector3(0,FIG_SCALE*0.7,0)));
     [11,12,13,14,15,16,23,24].forEach(i=>{ if(v[i]){ fig.joints[i].visible=true; fig.joints[i].position.copy(v[i]); } });
+    if(fig.character){
+      // hands take over the wrist joints
+      if(v[15]){ fig.hands[15].visible=true; fig.hands[15].position.copy(v[15]); fig.joints[15].visible=false; }
+      if(v[16]){ fig.hands[16].visible=true; fig.hands[16].position.copy(v[16]); fig.joints[16].visible=false; }
+    }
     const legs = visOK(lm,25)&&visOK(lm,26)&&visOK(lm,27)&&visOK(lm,28);
     fig.bones.lThigh.visible=fig.bones.lShin.visible=fig.bones.rThigh.visible=fig.bones.rShin.visible=legs;
     [25,26,27,28].forEach(i=>{ fig.joints[i].visible=legs; });
@@ -353,15 +431,38 @@ try{
       orientBone(fig.bones.lThigh, v[23], v[25]); orientBone(fig.bones.lShin, v[25], v[27]);
       orientBone(fig.bones.rThigh, v[24], v[26]); orientBone(fig.bones.rShin, v[26], v[28]);
       [25,26,27,28].forEach(i=>{ if(v[i]) fig.joints[i].position.copy(v[i]); });
+      if(fig.character){
+        placeFoot(fig.feet[27], v[27]); placeFoot(fig.feet[28], v[28]);
+        fig.joints[27].visible=false; fig.joints[28].visible=false;
+      }
+    } else if(fig.character){
+      fig.feet[27].visible=false; fig.feet[28].visible=false;
     }
     return true;
   }
 
   /* ---- the live player avatar at the impact plane (central feedback, DESIGN_SPEC §6) ---- */
-  const avatar = makeFigure({ boneR:0.10, jointR:0.13, headR:0.34, color:COL.avatarBase, opacity:0.5 });
+  const avatar = makeFigure({ character:true, boneR:0.14, jointR:0.17, headR:0.42, color:COL.avatarBase, opacity:0.9 });
   avatar.group.position.set(0, FIG_CY, 0.6); scene.add(avatar.group);
   const C_LANE=new THREE.Color(COL.avatarBase), C_GOOD=new THREE.Color(COL.silGood), C_WORK=new THREE.Color();
   let avatarFlashUntil = -1;
+
+  /* landmark smoothing for the avatar: lerp positions toward the source each frame so camera jitter
+     and keyboard pose snaps glide instead of popping (extra polish on top of the Engine's EMA). */
+  let avatarLm=null;
+  function smoothAvatar(src,dt){
+    const a = reduced ? 1 : clamp(dt*16, 0, 1);
+    if(!avatarLm || avatarLm.length!==src.length){
+      avatarLm = src.map(p=> p?{x:p.x,y:p.y,visibility:p.visibility}:null);
+      return avatarLm;
+    }
+    for(let i=0;i<src.length;i++){ const p=src[i]; let s=avatarLm[i];
+      if(!p){ avatarLm[i]=null; continue; }
+      if(!s){ avatarLm[i]={x:p.x,y:p.y,visibility:p.visibility}; continue; }
+      s.x=lerpN(s.x,p.x,a); s.y=lerpN(s.y,p.y,a); s.visibility=p.visibility;
+    }
+    return avatarLm;
+  }
 
   /* ---- the active wall: translucent slab + rim + neon silhouette hole (DESIGN_SPEC §5) ---- */
   const wall = new THREE.Group(); wall.visible=false; scene.add(wall);
@@ -371,7 +472,7 @@ try{
   wall.add(new THREE.Mesh(slabGeo, slabMat));
   const rimMat = new THREE.LineBasicMaterial({ color:COL.slabRim, transparent:true, opacity:0.5 });
   wall.add(new THREE.LineSegments(new THREE.EdgesGeometry(slabGeo), rimMat));
-  const sil = makeFigure({ boneR:0.12, jointR:0.15, headR:0.38, color:COL.silGood, opacity:1.0 });
+  const sil = makeFigure({ wire:true, boneR:0.11, jointR:0.14, headR:0.4, color:COL.silGood, opacity:0.95 });
   sil.group.position.set(0,0,0.3); wall.add(sil.group);   // wall group is placed at y=FIG_CY, so sil mid-hip = FIG_CY
 
   /* ---- pass/miss FX: shatter shards + ring shockwave + full-frame flash (DESIGN_SPEC §5.2/§5.3) ---- */
@@ -382,6 +483,7 @@ try{
   const ringTex = radialTex([[0,'rgba(255,255,255,0)'],[0.55,'rgba(255,255,255,0)'],[0.72,'rgba(255,255,255,0.95)'],[0.85,'rgba(255,255,255,0.45)'],[1,'rgba(255,255,255,0)']]);
   const ring = new THREE.Sprite(new THREE.SpriteMaterial({ map:ringTex, transparent:true, opacity:0, blending:THREE.AdditiveBlending, depthWrite:false, fog:false }));
   ring.visible=false; scene.add(ring); let ringLife=0; const RING_TTL=0.5;
+  let shakeAmt=0;   // screen-shake-lite: decaying positional camera jitter on pass/miss
 
   const SHARD_N = reduced ? 0 : 14;
   const shardGeo = new THREE.TetrahedronGeometry(0.5);
@@ -393,8 +495,9 @@ try{
   }
   function triggerFX(kind){
     const c = kind==='pass' ? COL.silGood : COL.bad;
-    flashMat.color.setHex(c); flashMat.opacity = kind==='pass' ? 0.26 : 0.5;
+    flashMat.color.setHex(c); flashMat.opacity = kind==='pass' ? 0.28 : 0.55;
     ring.position.set(0, FIG_CY, 0.6); ring.material.color.setHex(c); ring.material.opacity=0.9; ring.scale.set(1,1,1); ring.visible=true; ringLife=0;
+    if(!reduced) shakeAmt = kind==='pass' ? 0.22 : 0.55;
     if(kind==='miss') avatarFlashUntil = _t + 0.3;
     for(const sh of shards){
       sh.mesh.visible=true; sh.mesh.material.color.setHex(c); sh.mesh.material.opacity=1;
@@ -428,6 +531,12 @@ try{
     const a = reduced ? 1 : 1-Math.pow(0.0016, Math.min(dt,0.05));
     camPos.lerp(_tp,a); camLook.lerp(_tl,a);
     camera.position.copy(camPos); camera.lookAt(camLook);
+    // screen-shake-lite: translate the camera (post-lookAt so orientation is preserved), decaying fast
+    if(shakeAmt>0){
+      camera.position.x += (Math.random()-0.5)*shakeAmt;
+      camera.position.y += (Math.random()-0.5)*shakeAmt;
+      shakeAmt = Math.max(0, shakeAmt - dt*2.6);
+    }
   }
 
   /* ---- engine bridge (read-only) ---- */
@@ -449,31 +558,49 @@ try{
       if(G.lives<prevLives) triggerFX('miss');
       prevScore=G.score; prevLives=G.lives; prevScreen=G.screen;
 
-      // active wall + neon silhouette
+      // active wall + neon silhouette (the GOAL "hole": a wire outline that fills solid when you match)
+      const matched = (G.matchScore||0) >= PASS;
       const w = (G.walls && G.walls[0]) ? G.walls[0] : null;
       if(w && G.screen==='play'){
         wall.visible=true;
+        const near = 1 - clamp(w.dist/SPAWN_DIST, 0, 1);   // 0 far → 1 at the impact plane
         wall.position.set(0, FIG_CY, distToZ(w.dist));
+        wall.scale.setScalar(reduced ? 1 : 1 + near*0.1);   // the wall "rushes" — swells as it nears
         const pose = poseById(w.targetId);
         if(pose){
           updateFigure(sil, pose.lm);
-          const matched = (G.matchScore||0) >= 0.72;
           const col = (pose.tier>=3 && !matched) ? COL.silWarn : COL.silGood;
+          sil.mat.wireframe = !matched;                     // fill the hole solid the instant you match
           sil.mat.color.setHex(col);
-          sil.mat.opacity = (reduced||matched) ? 1 : 0.82+0.18*(0.5+0.5*Math.sin(t*Math.PI*3));   // gentle ~1.5Hz pulse
+          sil.mat.opacity = (reduced||matched) ? 1 : 0.8+0.2*(0.5+0.5*Math.sin(t*Math.PI*3));   // gentle ~1.5Hz pulse
         }
+        // rim urgency: flashes red as an un-matched wall bears down (juicier approach cue)
+        const urgent = !reduced && near>0.55 && !matched;
+        rimMat.color.setHex(urgent ? COL.bad : COL.slabRim);
+        rimMat.opacity = clamp(0.4 + 0.5*near + (urgent ? 0.25*(0.5+0.5*Math.sin(t*18)) : 0), 0, 1);
       } else { wall.visible=false; }
 
       // live avatar — camera: smoothed landmarks ; keyboard: committed pose fixture (SPEC §8 / DESIGN_SPEC §6)
       let src=null;
       if(G.control==='camera'){ src = (G.cam && G.cam.seen) ? G.cam.smoothed : null; }
       else { src = G.kbLm; }
-      if(src && updateFigure(avatar, src)){
-        const k = clamp((G.matchScore||0)/0.72, 0, 1);
+      if(!src) avatarLm=null;                                // reset smoothing across a tracking gap
+      const drive = src ? smoothAvatar(src, dt) : null;
+      if(drive && updateFigure(avatar, drive)){
+        const k = clamp((G.matchScore||0)/PASS, 0, 1);
+        const flashing = t < avatarFlashUntil;
         C_WORK.copy(C_LANE).lerp(C_GOOD, k);
-        let op = 0.42 + 0.43*k;
-        if(t < avatarFlashUntil){ C_WORK.setHex(COL.bad); op = 0.9; }
-        avatar.mat.color.copy(C_WORK); avatar.mat.opacity = op;
+        let op = 0.8 + 0.2*k;
+        if(flashing){ C_WORK.setHex(COL.bad); op = 0.96; }
+        avatar.mat.color.copy(C_WORK);
+        if(avatar.mat.emissive) avatar.mat.emissive.copy(C_WORK);
+        avatar.mat.emissiveIntensity = flashing ? 1.1 : (0.45 + 0.55*k);
+        avatar.mat.opacity = op;
+        if(avatar.glow){ avatar.glow.material.color.copy(C_WORK);
+          avatar.glow.material.opacity = 0.2 + 0.45*k + (flashing?0.4:0); }
+        // subtle "locked in" pop when you cross the pass threshold
+        const wantS = (!reduced && matched) ? 1.05 : 1.0;
+        const cs = avatar.group.scale.x; avatar.group.scale.setScalar(cs + (wantS-cs)*clamp(dt*10,0,1));
       } else { avatar.group.visible=false; }
 
       stepFX(dt);
@@ -840,6 +967,7 @@ function startGame(){
   G.currentTarget=first.target;
   var nx=pickPose(1, 1);
   G.nextPose=nx; G.nextTarget=nx.target;
+  if(G.control==='camera' && G.cam.on) showCamPip(true);   // keep the "YOU" webcam PIP visible during play
   showScreen('play'); updateNextPoseUI(); updateHud();
 }
 
@@ -978,35 +1106,37 @@ function roundRect(gx,x,y,w,h,r){ gx.beginPath(); gx.moveTo(x+r,y); gx.arcTo(x+w
 function overlayStatus(){
   if(G.screen==='lobby') return G.cam.tpose?'hold the T… locking on':'🧍 T-pose to begin';
   if(G.screen==='over')  return G.cam.tpose?'hold the T… restarting':'🧍 T-pose to play again';
-  return G.cam.seen?'match the shape':'stand back so your body shows';
+  if(!G.cam.seen) return 'stand back so your body shows';
+  return 'match '+Math.round(clamp(G.matchScore,0,1)*100)+'%';   // live % during play
 }
 function drawCamOverlay(){
   var cv=$('camOverlay'); if(!cv||!cv.getContext) return;
   var gx=cv.getContext('2d'); if(!gx) return;
-  var w=cv.width||132, h=cv.height||99, x=0, y=0;
+  var w=cv.width||132, h=cv.height||99, x=0, y=0, s=w/132;   // s scales strokes to the (hi-res) canvas
   gx.clearRect(x,y,w,h);
   var lm=G.cam.lm;
+  var matched=(G.screen==='play') && (G.matchScore>=PASS_THRESHOLD);
   if(G.screen==='lobby' || G.screen==='over'){
     var pr=clamp(G.cam.tHold/GESTURE_HOLD,0,1);
-    if(pr>0){ var cx=x+w/2, cy=y+h*0.42, r=26;
-      gx.lineWidth=6; gx.strokeStyle='rgba(255,255,255,0.18)'; gx.beginPath(); gx.arc(cx,cy,r,0,7); gx.stroke();
+    if(pr>0){ var cx=x+w/2, cy=y+h*0.42, r=26*s;
+      gx.lineWidth=6*s; gx.strokeStyle='rgba(255,255,255,0.18)'; gx.beginPath(); gx.arc(cx,cy,r,0,7); gx.stroke();
       gx.strokeStyle='#ffd23f'; gx.beginPath(); gx.arc(cx,cy,r,-Math.PI/2,-Math.PI/2+pr*Math.PI*2,false); gx.stroke(); }
   }
   if(lm){
     var px=function(i){ return x+(1-lm[i].x)*w; }, py=function(i){ return y+lm[i].y*h; };   // mirror (body-dash-2d.html:707)
     var tp=(G.screen==='lobby'||G.screen==='over')&&G.cam.tpose;
-    gx.lineWidth=4; gx.lineCap='round'; gx.strokeStyle=tp?'#3ef0a0':'#5ee0ff'; gx.beginPath();
+    gx.lineWidth=4*s; gx.lineCap='round'; gx.strokeStyle=(tp||matched)?'#3ef0a0':'#5ee0ff'; gx.beginPath();
     CON.forEach(function(pair){ var a=pair[0], b=pair[1]; if(lm[a]&&lm[b]){ gx.moveTo(px(a),py(a)); gx.lineTo(px(b),py(b)); } });
     gx.stroke();
     gx.fillStyle='#ffd23f';
-    [0,11,12,13,14,15,16,23,24,25,26,27,28].forEach(function(i){ if(lm[i]&&(lm[i].visibility===undefined||lm[i].visibility>=VIS_MIN)){ gx.beginPath(); gx.arc(px(i),py(i),4,0,7); gx.fill(); } });
+    [0,11,12,13,14,15,16,23,24,25,26,27,28].forEach(function(i){ if(lm[i]&&(lm[i].visibility===undefined||lm[i].visibility>=VIS_MIN)){ gx.beginPath(); gx.arc(px(i),py(i),4*s,0,7); gx.fill(); } });
   }
-  var status=overlayStatus();
-  gx.fillStyle='rgba(0,0,0,0.6)'; gx.fillRect(x,y+h-22,w,22);
-  gx.font='700 11px Trebuchet MS'; gx.textAlign='center';
-  gx.fillStyle=(status.indexOf('T-pose')>=0||status.indexOf('stand back')>=0)?'#ffd23f':'#9fe8c9';
-  gx.fillText(status,x+w/2,y+h-7);
-  gx.strokeStyle='rgba(94,224,255,0.75)'; gx.lineWidth=3; roundRect(gx,x,y,w,h,12); gx.stroke();
+  var status=overlayStatus(), bh=22*s;
+  gx.fillStyle='rgba(0,0,0,0.6)'; gx.fillRect(x,y+h-bh,w,bh);
+  gx.font='700 '+(11*s).toFixed(1)+'px Trebuchet MS'; gx.textAlign='center';
+  gx.fillStyle=matched?'#3ef0a0':((status.indexOf('T-pose')>=0||status.indexOf('stand back')>=0)?'#ffd23f':'#9fe8c9');
+  gx.fillText(status,x+w/2,y+h-7*s);
+  gx.strokeStyle=matched?'rgba(62,240,160,0.9)':'rgba(94,224,255,0.75)'; gx.lineWidth=3*s; roundRect(gx,x,y,w,h,12*s); gx.stroke();
 }
 
 /* ================================ RAF loop =================================== */

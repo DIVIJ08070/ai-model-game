@@ -6,7 +6,7 @@
 const clamp=(v,a,b)=>v<a?a:(v>b?b:v);
 const lerp=(a,b,t)=>a+(b-a)*t;
 const sign=x=>x>0?1:(x<0?-1:0);
-const LIFT_MAX=3.5, ROLL_MAX=0.5;
+const LIFT_MAX=3.5, ROLL_MAX=0.5, MAX_ALT=60, BANK_DEADZONE=0.12;
 const PARAMS={ gravity:4.0, baseSpeed:14, vxDamp:0.9, turnAccel:16, maxVx:8,
                climbSlow:0.35, diveFast:0.5, glideDescent:0.35 };
 
@@ -25,7 +25,7 @@ function glideFactor(wristSpan, shoulderW, raiseL, raiseR){
   return wide*level;
 }
 function bankRate(raiseL, raiseR, deadzone, maxRate){
-  if(deadzone==null) deadzone=0.15; if(maxRate==null) maxRate=1.0;
+  if(deadzone==null) deadzone=BANK_DEADZONE; if(maxRate==null) maxRate=1.0;
   var diff=raiseL-raiseR;
   if(Math.abs(diff)<deadzone) return 0;
   return sign(diff)*Math.min(Math.abs(diff)-deadzone,1)*maxRate;
@@ -42,12 +42,17 @@ function stepFlight(state, controls, dt, params){
   var descent=p.gravity*(1-glide*(1-p.glideDescent));
   state.vy=(state.vy||0)+lift-descent*dt;
   state.speed=p.baseSpeed*(1-pitch*p.climbSlow)*(1+Math.max(0,-pitch)*p.diveFast);
-  state.vx=clamp((state.vx||0)*p.vxDamp+turn*p.turnAccel*dt,-p.maxVx,p.maxVx);
+  state.vx=clamp((state.vx||0)*p.vxDamp - turn*p.turnAccel*dt,-p.maxVx,p.maxVx);
   state.x=(state.x||0)+state.vx*dt;
   state.z=(state.z||0)+state.speed*dt;
   state.y=(state.y||0)+state.vy*dt;
-  state.roll=lerp(state.roll||0, clamp(-turn,-1,1)*ROLL_MAX, clamp(dt*8,0,1));
+  state.roll=lerp(state.roll||0, clamp(turn,-1,1)*ROLL_MAX, clamp(dt*8,0,1));
   return state;
+}
+function applyCeiling(bird, groundY, maxAlt){
+  var c=groundY+maxAlt;
+  if(bird.y>c){ bird.y=c; if((bird.vy||0)>0) bird.vy=0; }
+  return bird;
 }
 function appleCollected(bird, apple, r){
   if(r==null) r=2.2;
@@ -104,6 +109,8 @@ ok('raiseL>raiseR ⇒ steers RIGHT (POSITIVE) — the documented convention', ba
 ok('raiseR>raiseL ⇒ steers LEFT (NEGATIVE) — the mirror', bankRate(0.2,0.6) < 0);
 ok('bank is exactly mirror-symmetric', bankRate(0.6,0.2)=== -bankRate(0.2,0.6));
 ok('bank magnitude clamps at maxRate', bankRate(2,0)===1.0 && bankRate(0,2)===-1.0);
+ok('at an asymmetric REST the baseline-subtracted bank is 0 — no drift', bankRate(0.30-0.30, (-0.10)-(-0.10))===0);
+ok('raising the LEFT arm above its own rest (lean-right) steers RIGHT regardless of rest asymmetry', bankRate(0.50-(-0.10), 0.30-0.30) > 0);
 
 // ---- ⇅ pitchRate (+ = climb, − = dive) ----
 ok('at the calibrated neutral → level (0)', pitchRate(-1.15,-1.15)===0);
@@ -117,8 +124,8 @@ const mkBird=()=>({x:0,y:30,z:0,vx:0,vy:0,roll:0,speed:14});
 ok('larger lift ⇒ higher vy', (()=>{ const a=stepFlight(mkBird(),{lift:1},0.1);
   const b=stepFlight(mkBird(),{lift:3},0.1); return b.vy>a.vy; })());
 ok('no lift over a step ⇒ altitude drops', (()=>{ const s=stepFlight(mkBird(),{lift:0},0.1); return s.y<30; })());
-ok('turn>0 ⇒ x increases (banks toward the RIGHT)', (()=>{ const s=stepFlight(mkBird(),{turn:1},0.1); return s.x>0; })());
-ok('turn<0 ⇒ x decreases (banks toward the LEFT)', (()=>{ const s=stepFlight(mkBird(),{turn:-1},0.1); return s.x<0; })());
+ok('turn>0 ⇒ x decreases (banks RIGHT on screen = world −x)', (()=>{ const s=stepFlight(mkBird(),{turn:1},0.1); return s.x<0; })());
+ok('turn<0 ⇒ x increases (banks LEFT on screen = world +x)', (()=>{ const s=stepFlight(mkBird(),{turn:-1},0.1); return s.x>0; })());
 ok('a dive (pitch<0) is FASTER than neutral', (()=>{ const n=stepFlight(mkBird(),{},0.1);
   const d=stepFlight(mkBird(),{pitch:-1},0.1); return d.speed>n.speed; })());
 ok('a climb (pitch>0) is SLOWER than neutral', (()=>{ const n=stepFlight(mkBird(),{},0.1);
@@ -126,10 +133,15 @@ ok('a climb (pitch>0) is SLOWER than neutral', (()=>{ const n=stepFlight(mkBird(
 ok('glide=1 descends SLOWER than glide=0', (()=>{ const g0=stepFlight(mkBird(),{glide:0},0.1);
   const g1=stepFlight(mkBird(),{glide:1},0.1); return g1.vy>g0.vy && g1.y>g0.y; })());
 ok('auto-fly: z always advances forward', (()=>{ const s=stepFlight(mkBird(),{},0.1); return s.z>0; })());
-ok('roll follows the (inverted) turn toward ±ROLL_MAX', (()=>{ let s=mkBird();
-  for(let i=0;i<40;i++) s=stepFlight(s,{turn:1},0.05); return s.roll<0 && s.roll>=-ROLL_MAX-1e-9; })());
+ok('roll follows the turn toward +ROLL_MAX for a RIGHT turn', (()=>{ let s=mkBird();
+  for(let i=0;i<40;i++) s=stepFlight(s,{turn:1},0.05); return s.roll>0 && s.roll<=ROLL_MAX+1e-9; })());
 ok('vx is clamped to ±maxVx', (()=>{ let s=mkBird(); for(let i=0;i<200;i++) s=stepFlight(s,{turn:1},0.1);
-  return s.vx<=PARAMS.maxVx+1e-9; })());
+  return Math.abs(s.vx)<=PARAMS.maxVx+1e-9; })());
+
+// ---- 🔝 applyCeiling — ground-relative altitude cap (kills only upward vy, never pulls down) ----
+ok('altitude caps at ground+MAX_ALT and kills upward vy', (()=>{ const b={x:0,y:200,z:0,vy:5}; applyCeiling(b,6,MAX_ALT); return b.y===66 && b.vy===0; })());
+ok('below the ceiling, altitude & vy are untouched', (()=>{ const b={x:0,y:30,z:0,vy:2}; applyCeiling(b,6,MAX_ALT); return b.y===30 && b.vy===2; })());
+ok('the ceiling never pulls the bird DOWN', (()=>{ const b={x:0,y:10,z:0,vy:-3}; applyCeiling(b,6,MAX_ALT); return b.y===10 && b.vy===-3; })());
 
 // ---- 🍎 appleCollected / 💥 isCrash ----
 ok('apple inside the radius is collected', appleCollected({x:0,y:30,z:0},{x:1,y:30.5,z:1})===true);
