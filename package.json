@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "python3 -m http.server 3000",
     "dev:vercel": "vercel dev",
-    "test": "node tests/logic.test.js && node tests/runtime.smoke.js && node tests/api.test.js && node tests/sky-dash.logic.test.js && node tests/sky-dash.smoke.js && node tests/pose-wall.logic.test.js && node tests/pose-wall.smoke.js"
+    "test": "node tests/logic.test.js && node tests/runtime.smoke.js && node tests/api.test.js && node tests/sky-dash.logic.test.js && node tests/sky-dash.smoke.js && node tests/pose-wall.logic.test.js && node tests/pose-wall.smoke.js && node tests/spell-caster.logic.test.js && node tests/spell-caster.smoke.js"
   },
   "dependencies": {
     "pg": "^8.13.1"
