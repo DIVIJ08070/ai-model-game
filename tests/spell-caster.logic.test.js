@@ -113,7 +113,7 @@ function isTpose(lm){ if(!lm) return false;
   return Math.abs(lm[15].y-shY)<tol && Math.abs(lm[16].y-shY)<tol; }
 function detectorFor(screen, frame){
   if(screen==='ready' || screen==='calib' || screen==='over') return 'pose';
-  if(screen==='play') return ((frame||0)%2===0)?'pose':'hands';
+  if(screen==='play' || screen==='tutorial') return ((frame||0)%2===0)?'pose':'hands';
   return null;
 }
 
@@ -211,6 +211,7 @@ ok('null / [] → NOT a T-pose', isTpose(null)===false && isTpose([])===false);
 /* ---- 🎥 detectorFor (dual-pump routing parity) ---- */
 ok('ready / calib / over → pose', detectorFor('ready')==='pose' && detectorFor('calib')==='pose' && detectorFor('over')==='pose');
 ok('play even frame → pose, odd frame → hands', detectorFor('play',0)==='pose' && detectorFor('play',1)==='hands' && detectorFor('play',2)==='pose');
+ok('tutorial alternates pose/hands (dodge + draw drills)', detectorFor('tutorial',0)==='pose' && detectorFor('tutorial',1)==='hands');
 ok('unknown screen → null', detectorFor('boot',0)===null);
 
 console.log('\n'+pass+' passed, '+fail+' failed');

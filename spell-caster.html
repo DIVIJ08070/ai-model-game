@@ -193,6 +193,7 @@
     <div class="ctarow"><button class="btn ghost" id="playKeysBtn">&#9000; Keys</button></div>
     <div id="camMsg" class="sub" style="text-align:center;color:var(--warn);min-height:1px;margin:10px 0 0"></div>
     <div id="lobbyReadout" class="sub" style="margin:8px 0 0;color:var(--lane)" aria-live="polite">&#129485; Body: &mdash;   &middot;   &#9995; Hand: &mdash;</div>
+    <div class="ctarow"><button class="btn ghost" id="tutorialBtn" style="font-size:14px">&#128218; Tutorial</button></div>
     <button class="linkbtn" id="howToBtn">How to cast</button>
     <div id="howto" class="hidden">
       <table class="howtbl">
@@ -209,6 +210,19 @@
     </div>
   </div>
 </div>
+
+<!-- TUTORIAL — interactive first-run onboarding (auto-shows once, skippable, reopenable) -->
+<div class="screen hidden" id="tutorialScreen"><div class="card">
+  <h1 class="title"><span class="a">HOW TO</span><span class="b">PLAY</span></h1>
+  <div id="tutProgress" class="sub" style="margin:0 0 4px;color:var(--lane);font-weight:900" aria-live="polite">Step 1 / 7</div>
+  <div id="tutIcon" style="font-size:46px;line-height:1;margin:2px 0 6px" aria-hidden="true">&#129485;</div>
+  <div id="tutInstruction" class="sub" style="min-height:3.2em;margin:4px 0 2px" aria-live="polite">&hellip;</div>
+  <div id="tutStatus" class="sub" style="min-height:1.4em;margin:0 0 10px;color:var(--good);font-weight:900" aria-live="polite"></div>
+  <div class="ctarow">
+    <button class="btn ghost" id="tutSkip">Skip</button>
+    <button class="btn" id="tutNext">Next &#9656;</button>
+  </div>
+</div></div>
 
 <!-- CALIBRATION (DESIGN §5.1) -->
 <div class="screen hidden" id="calibScreen"><div class="card">
@@ -664,7 +678,7 @@ function isTpose(lm){ if(!lm) return false;
 /* 5.9 detectorFor — which detector the shared pump routes for a screen+frame (also copied into the smoke). */
 function detectorFor(screen, frame){
   if(screen==='ready' || screen==='calib' || screen==='over') return 'pose';
-  if(screen==='play') return ((frame||0)%2===0)?'pose':'hands';
+  if(screen==='play' || screen==='tutorial') return ((frame||0)%2===0)?'pose':'hands';
   return null;
 }
 
@@ -703,6 +717,7 @@ var G={
         lm:null, handLm:null, leanRaw:0, shoulderY:0.42, tpose:false, tHold:0 },
 
   keys:{ left:false, right:false, duck:false },
+  tutorial:{ active:false, idx:0, mode:null, calT:0, drew:false, holdT:0 },
   _eid:1, _last:0, _lastCastT:0, _scorePopT:0, _cw:640, _ch:480
 };
 
@@ -725,6 +740,7 @@ function camMsg(t){ var e=$('camMsg'); if(e) e.textContent=t||''; }
 function showCamPip(on){ var w=$('camWrap'); if(w&&w.classList) w.classList.toggle('hidden',!on); }
 function showScreen(name){
   show('lobbyScreen', name==='ready');
+  show('tutorialScreen', name==='tutorial');
   show('calibScreen', name==='calib');
   show('overScreen', name==='over');
   show('hud', name==='play');
@@ -834,14 +850,19 @@ function onHandsResults(res){
   var cam=G.cam; cam.handsSeen=true;
   var hand=res && res.multiHandLandmarks && res.multiHandLandmarks[0];
   cam.handLm=hand||null; G.activeHand=hand||null;
-  if(G.screen!=='play') return;
+  var cs=curTutStep();
+  var tutDraw=(G.screen==='tutorial' && cs && cs.id==='draw');   // let the "draw a glyph" step recognize too
+  if(G.screen!=='play' && !tutDraw) return;
   if(hand && isIndexExtended(hand)){
     G.stroke.armed=true;
     G.stroke.points.push({x:1-hand[8].x, y:hand[8].y});   // mirror the tip to selfie space
     if(G.stroke.points.length>STROKE_MAX) G.stroke.points.shift();
   } else if(G.stroke.armed){
     var g=recognizeGlyph(G.stroke.points);
-    if(g){ G.stroke.flashT=FLASH_DUR; castSpell(g); }
+    if(tutDraw){                                            // tutorial: any recognized glyph passes the step
+      if(g){ G.stroke.flashT=FLASH_DUR; G.stroke.lastGlyph=g; G.tutorial.drew=true; }
+      else { G.stroke.fizzleT=FIZZLE_DUR; G.stroke.lastGlyph=null; }
+    } else if(g){ G.stroke.flashT=FLASH_DUR; castSpell(g); }
     else { G.stroke.fizzleT=FIZZLE_DUR; G.stroke.lastGlyph=null; showLastCast('fizzle'); }
     G.stroke.points=[]; G.stroke.armed=false;
   }
@@ -946,6 +967,87 @@ function startGame(){
   G._lastCastT=0;
   spawnWave(1);
   showScreen('play'); updateHud();
+}
+
+/* ================================ tutorial (interactive first-run onboarding) ============
+   Auto-shows once (localStorage 'spellcaster_tutorial_seen'), Skip button + S/Esc, reopenable
+   from the lobby 📖 Tutorial button. Steps evaluate the SAME pure signals the match uses, so a
+   real action advances each step; keyboard/camera-off players advance with Next/Enter. */
+var TUT_STEPS=[
+  { id:'frame', icon:'🧍', text:'Step back so the camera sees your torso and one hand (your webcam is bottom‑right).',
+    cam:function(){ return G.cam.seen && !!G.cam.handLm; } },
+  { id:'calib', icon:'🎯', text:'Stand relaxed and centered — calibrating your neutral stance…',
+    cam:function(dt){ tutCalibAccum(dt); return G.tutorial.calT>=1.0 && G.calibration.n>0; } },
+  { id:'left',  icon:'◀',  text:'Lean your torso LEFT to dodge left.',
+    cam:function(){ return (G.cam.leanRaw-G.calibration.center) <= -LEAN_STEP; } },
+  { id:'right', icon:'▶',  text:'Now lean RIGHT to dodge right.',
+    cam:function(){ return (G.cam.leanRaw-G.calibration.center) >= LEAN_STEP; } },
+  { id:'duck',  icon:'⬇',  text:'Crouch DOWN to duck under high (amber) attacks.',
+    cam:function(){ return isDuck(G.cam.lm, G.calibration.standingY); } },
+  { id:'draw',  icon:'✍',  text:'Raise your index finger and draw a ╱ line in the air to cast Bolt.',
+    cam:function(){ return G.tutorial.drew; } },
+  { id:'go',    icon:'🧙', text:"You're ready! Strike a 🧍 T‑pose (or press Start) to begin the duel.",
+    cam:function(){ return G.cam.tpose; } }
+];
+function needsTutorial(){ try{ return localStorage.getItem('spellcaster_tutorial_seen')!=='1'; }catch(e){ return false; } }
+function markTutorialSeen(){ try{ localStorage.setItem('spellcaster_tutorial_seen','1'); }catch(e){} }
+function curTutStep(){ return G.tutorial.active ? TUT_STEPS[G.tutorial.idx] : null; }
+/* the single "start requested" entry (T-pose / Keys / Enter route through here on the lobby). */
+function requestStart(mode){ if(needsTutorial()){ openTutorial(mode); return; } proceedStart(mode); }
+function proceedStart(mode){ if(mode==='keyboard') startWithScheme('keyboard'); else beginCalibration(); }
+function openTutorial(mode){
+  G.tutorial.active=true; G.tutorial.idx=0; G.tutorial.mode=mode||null; G.tutorial.calT=0; G.tutorial.drew=false; G.tutorial.holdT=0;
+  G.calibration={ center:0, standingY:0.42, done:false, t:0, n:0, sumC:0, sumY:0 };
+  G.stroke={ armed:false, points:[], lastGlyph:null, flashT:0, fizzleT:0 };
+  G.screen='tutorial'; showScreen('tutorial'); renderTutorial();
+}
+function tutCalibAccum(dt){
+  var c=G.calibration, cam=G.cam;
+  if(cam.seen && cam.lm){ c.n++; c.sumC+=cam.leanRaw; c.sumY+=cam.shoulderY; c.center=c.sumC/c.n; c.standingY=c.sumY/c.n; }
+  G.tutorial.calT+=dt;
+}
+function advTutorial(){
+  if(!G.tutorial.active) return;
+  if(G.tutorial.idx>=TUT_STEPS.length-1){ finishTutorial(); return; }
+  G.tutorial.idx++; G.tutorial.holdT=0; G.tutorial.drew=false;
+  G.stroke={ armed:false, points:[], lastGlyph:null, flashT:0, fizzleT:0 };
+  if(TUT_STEPS[G.tutorial.idx].id==='calib'){ G.calibration={ center:0, standingY:0.42, done:false, t:0, n:0, sumC:0, sumY:0 }; G.tutorial.calT=0; }
+  renderTutorial();
+}
+function stepTutorial(dt){
+  var st=curTutStep(); if(!st) return;
+  if(G.control==='camera' && G.cam.on && typeof st.cam==='function'){
+    var okc=false; try{ okc=!!st.cam(dt); }catch(e){ okc=false; }
+    if(okc){ G.tutorial.holdT+=dt; if(G.tutorial.holdT>=0.35) advTutorial(); }
+    else G.tutorial.holdT=Math.max(0,G.tutorial.holdT-dt);
+    setTutStatus(okc?'✓ Nice!':'');
+  }
+}
+function finishTutorial(){
+  markTutorialSeen();
+  var mode=G.tutorial.mode; G.tutorial.active=false;
+  if(mode) proceedStart(mode); else { G.screen='ready'; showScreen('ready'); updateHud(); }
+}
+function skipTutorial(){ finishTutorial(); }
+function tutText(st){
+  if(G.control!=='camera'){
+    var kb={ frame:'Camera is off — you can play the whole game on the keyboard too.',
+      calib:'No calibration needed for keyboard play.',
+      left:'Press ◀ / A to dodge left.', right:'Press ▶ / D to dodge right.', duck:'Press ▼ / S to duck.',
+      draw:'Cast with keys: 1 Bolt · 2 Fireball · 3 Shield · 4 Lightning.',
+      go:'Press Start (or Enter) to begin.' };
+    return kb[st.id]||st.text;
+  }
+  return st.text;
+}
+function setTutStatus(t){ var s=$('tutStatus'); if(s) s.textContent=t||''; }
+function renderTutorial(){
+  var st=curTutStep(); if(!st) return;
+  var p=$('tutProgress'); if(p) p.textContent='Step '+(G.tutorial.idx+1)+' / '+TUT_STEPS.length;
+  var ic=$('tutIcon'); if(ic) ic.textContent=st.icon;
+  var ins=$('tutInstruction'); if(ins) ins.textContent=tutText(st);
+  var nb=$('tutNext'); if(nb) nb.textContent=(G.tutorial.idx>=TUT_STEPS.length-1)?'Start ▸':'Next ▸';
+  setTutStatus('');
 }
 
 /* enemy AI: drift -> telegraph -> fire an enemy projectile down a lane slot. */
@@ -1115,12 +1217,13 @@ function update(ts){
   pumpCamera();
   if((G.screen==='ready'||G.screen==='over') && G.control==='camera' && G.cam.on){
     if(G.cam.tpose) G.cam.tHold+=dt; else G.cam.tHold=Math.max(0,G.cam.tHold-dt*2);
-    if(G.cam.tHold>=GESTURE_HOLD){ G.cam.tHold=0; if(G.screen==='ready') beginCalibration(); else startGame(); }
+    if(G.cam.tHold>=GESTURE_HOLD){ G.cam.tHold=0; if(G.screen==='ready') requestStart('camera'); else startGame(); }
   }
+  if(G.screen==='tutorial') stepTutorial(dt);
   if(G.screen==='calib') stepCalib(dt);
   if(G.screen==='play') stepPlay(dt);
   updateLobbyReadout();
-  if(G.screen==='play'){ try{ drawCastOverlay(); }catch(e){} }
+  if(G.screen==='play' || G.screen==='tutorial'){ try{ drawCastOverlay(); }catch(e){} }
   updateHud();
   if(typeof window!=='undefined' && typeof window.__spellRender==='function'){ try{ window.__spellRender(dt,t); }catch(e){} }
   if(typeof requestAnimationFrame!=='undefined') requestAnimationFrame(update);
@@ -1133,7 +1236,9 @@ function initInput(){
   window.addEventListener('keydown',function(e){
     if(document.activeElement && document.activeElement.tagName==='INPUT') return;
     var k=e.key;
-    if(G.screen==='ready' && !camBooting){ if(k==='Enter'){ e.preventDefault(); startWithScheme('keyboard'); } return; }
+    if(G.screen==='tutorial'){ if(k==='Enter'){ e.preventDefault(); advTutorial(); }
+      else if(k==='Escape'||k==='s'||k==='S'){ e.preventDefault(); skipTutorial(); } return; }
+    if(G.screen==='ready' && !camBooting){ if(k==='Enter'){ e.preventDefault(); requestStart('keyboard'); } return; }
     if(G.screen==='over'){ if(k==='Enter'){ e.preventDefault(); startGame(); } return; }
     if(G.screen!=='play') return;
     if(k==='ArrowLeft'||k==='a'||k==='A'){ G.keys.left=true; G.mage.slot=-1; e.preventDefault(); }
@@ -1158,9 +1263,12 @@ function initDom(){
   G.cam.video=$('cam');
   try{ G.best=parseInt((localStorage.getItem('spellcaster_best')||'0'),10)||0; }catch(e){ G.best=0; }
   wire('playCamBtn','click',function(){ startCameraFlow(); });
-  wire('playKeysBtn','click',function(){ startWithScheme('keyboard'); });
+  wire('playKeysBtn','click',function(){ requestStart('keyboard'); });
   wire('againBtn','click',function(){ startGame(); });
   wire('howToBtn','click',function(){ var h=$('howto'); if(h&&h.classList) h.classList.toggle('hidden'); });
+  wire('tutorialBtn','click',function(){ openTutorial(null); });
+  wire('tutSkip','click',function(){ skipTutorial(); });
+  wire('tutNext','click',function(){ advTutorial(); });
   initInput();
   sizeCanvas();
   if(typeof window!=='undefined' && window.addEventListener) window.addEventListener('resize', function(){ sizeCanvas(); });
@@ -1175,7 +1283,10 @@ if(typeof requestAnimationFrame!=='undefined') requestAnimationFrame(update);
   leanOffset:leanOffset, pickDodge:pickDodge, isDuck:isDuck,
   isIndexExtended:isIndexExtended, isPinch:isPinch, recognizeGlyph:recognizeGlyph,
   isTpose:isTpose, detectorFor:detectorFor, castSpell:castSpell,
-  startWithScheme:startWithScheme, SPELLS:SPELLS }; }catch(e){}
+  startWithScheme:startWithScheme, SPELLS:SPELLS,
+  openTutorial:openTutorial, advTutorial:advTutorial, skipTutorial:skipTutorial,
+  finishTutorial:finishTutorial, needsTutorial:needsTutorial, requestStart:requestStart,
+  curTutStep:curTutStep, TUT_STEPS:TUT_STEPS }; }catch(e){}
 </script>
 </body>
 </html>
