@@ -297,7 +297,8 @@ var APPLE_BEHIND=25, APPLE_AHEAD=60, APPLE_SPREAD=320;
 var OBST_BEHIND=25,  OBST_AHEAD=70,  OBST_SPREAD=420;
 var PARAMS={ gravity:4.0, baseSpeed:14, vxDamp:0.9, turnAccel:16, maxVx:8,
              climbSlow:0.35, diveFast:0.5, glideDescent:0.35,
-             diveAccel:16, termVy:20, tuckSpeed:0.35 };   // FEATURE 1: tucked-wing dive tuning
+             diveAccel:16, termVy:20, tuckSpeed:0.35,      // FEATURE 1: tucked-wing dive tuning
+             bankSink:2.0 };   // Goal 3: gentle altitude bleed from wing-asymmetry banking (a small fraction of diveAccel)
 
 /* ===================== PURE FUNCTIONS — mirrored into tests/sky-dash.logic.test.js =====================
    Every function here is f(numbers)->number/bool: no DOM, no globals (besides the tuning consts
@@ -354,7 +355,8 @@ function pitchRate(avgRaise, neutral, deadzone, maxRate){
 function stepFlight(state, controls, dt, params){
   var p=params||PARAMS;
   var lift=controls.lift||0, turn=controls.turn||0, pitch=controls.pitch||0, glide=controls.glide||0, tuck=controls.tuck||0;
-  var descent=p.gravity*(1-glide*(1-p.glideDescent)) + tuck*(p.diveAccel||0);   // glide softens gravity; tuck = tucked-wing dive → extra descent
+  var bank=clamp(Math.abs(turn),0,1);   // Goal 3: wing-asymmetry magnitude (banking) → a little sink, capped
+  var descent=p.gravity*(1-glide*(1-p.glideDescent)) + tuck*(p.diveAccel||0) + bank*(p.bankSink||0);   // glide softens gravity; tuck = tucked-wing dive → extra descent; banking bleeds a little altitude
   state.vy=(state.vy||0)+lift-descent*dt;                     // flap up, gravity down
   if(tuck>0){ var term=-(p.termVy||18); if(state.vy<term) state.vy=term; }       // controlled speed-dive → clamp terminal velocity (never a teleport)
   state.speed=p.baseSpeed*(1-pitch*p.climbSlow)*(1+Math.max(0,-pitch)*p.diveFast)*(1+tuck*(p.tuckSpeed||0)); // climb→slower, dive→faster, tuck→small forward boost
@@ -537,12 +539,13 @@ function onPoseResults(res){
 /* ================================ controls =================================== */
 function flap(){ if(G.screen!=='play') return; G.pendingLift=Math.min(G.pendingLift+FLAP_IMPULSE,LIFT_MAX); sfx('flap'); }
 function computeControls(dt){
-  var lift=0,turn=0,pitch=0,glide=0,tuck=0;
+  var lift=0,turn=0,pitch=0,glide=0,tuck=0,wingL=0,wingR=0;
   if(G.pendingLift>0){ lift+=G.pendingLift; G.pendingLift=0; }        // keyboard flaps
   if(G.control==='camera' && G.cam.seen){
     var c=G.cam, cur=c.avgRaise;
     var rL=c.raiseL-(c.calibrated?c.restL:0);       // per-arm baseline subtraction (Goal 2 anti-drift)
     var rR=c.raiseR-(c.calibrated?c.restR:0);
+    wingL=rL; wingR=rR;                              // Goal 2: expose each arm's height so the View drives that wing independently
     if(c.prevAvg!=null){ var l=flapImpulse(c.prevAvg,cur,dt); if(l>0) lift+=l; }   // camera flap
     c.prevAvg=cur;
     var rawTurn=clamp(bankRate(rL,rR,BANK_DEADZONE,1.0)*BANK_SENS,-1,1);
@@ -559,7 +562,7 @@ function computeControls(dt){
     glide=(!G.keys.dive)?KB_GLIDE:0;
     tuck=(G.keys.dive?1:0);                                             // Down/S = dive (keyboard fallback)
   }
-  return {lift:lift,turn:turn,pitch:pitch,glide:glide,tuck:tuck};
+  return {lift:lift,turn:turn,pitch:pitch,glide:glide,tuck:tuck,wingL:wingL,wingR:wingR};
 }
 
 /* ================================ game flow ================================== */
@@ -961,6 +964,7 @@ try{
     (matchMedia('(pointer: coarse)').matches || matchMedia('(max-width: 800px)').matches);
   const reduceMotion = (typeof matchMedia==='function') && matchMedia('(prefers-reduced-motion: reduce)').matches;
   const clampN = (v,a,b) => v<a?a:(v>b?b:v);
+  const lerpN  = (a,b,t) => a+(b-a)*t;
 
   /* ---- renderer (SPEC §8.1 perf: clamp pixel ratio, shadows off on mobile) ---- */
   const renderer = new THREE.WebGLRenderer({ canvas, antialias:!isCoarse, powerPreference:'high-performance' });
@@ -1003,8 +1007,8 @@ try{
   /* ---- shared flat-shaded materials ---- */
   const M = {
     birdBody:new THREE.MeshStandardMaterial({color:COL.birdBody, flatShading:true, roughness:0.55, metalness:0.05, emissive:0x0a3d45, emissiveIntensity:0.12}),
-    birdBelly:new THREE.MeshStandardMaterial({color:COL.birdBelly, flatShading:true, roughness:0.6}),
-    birdWing:new THREE.MeshStandardMaterial({color:COL.birdWing, flatShading:true, roughness:0.5}),
+    birdBelly:new THREE.MeshStandardMaterial({color:COL.birdBelly, flatShading:true, roughness:0.6, side:THREE.DoubleSide}),
+    birdWing:new THREE.MeshStandardMaterial({color:COL.birdWing, flatShading:true, roughness:0.5, side:THREE.DoubleSide}),
     birdBeak:new THREE.MeshStandardMaterial({color:COL.birdBeak, flatShading:true, roughness:0.4}),
     birdEye:new THREE.MeshStandardMaterial({color:COL.birdEye, roughness:0.3}),
     mtnRock:new THREE.MeshStandardMaterial({color:COL.mtnRock, flatShading:true, roughness:0.95}),
@@ -1019,29 +1023,64 @@ try{
 
   function meshAt(geo,mat,x,y,z){ const m=new THREE.Mesh(geo,mat); m.position.set(x,y,z); return m; }
 
-  /* =================== procedural low-poly bird (DESIGN_SPEC §5) =================== */
+  /* =================== procedural low-poly bird (DESIGN_SPEC §5) ===================
+     A shaped/tapered fuselage + head/beak/eyes + fanned tail, and articulated wings made of
+     TWO segments each: an inner "arm" on a shoulder pivot + an outer "hand/primaries" panel on
+     an elbow joint, so the wings can fold naturally for a diving-falcon tuck (Goal 1/4). */
+  // A thin, flat, tapered/swept low-poly panel in the X-Z plane (a feather silhouette, not a rectangle).
+  // pts = CCW outline [x,z] for the RIGHT side (x>=0); sx=-1 mirrors it for the left wing.
+  // Materials array is [birdWing (top), birdBelly (underside)] so the flap two-tones as it rolls over.
+  function wingPanel(sx,pts,thick){
+    const n=pts.length, h=(thick||0.05)*0.5, pos=[], idx=[];
+    for(let i=0;i<n;i++) pos.push(sx*pts[i][0], h, pts[i][1]);      // 0..n-1 : top ring (+y)
+    for(let i=0;i<n;i++) pos.push(sx*pts[i][0], -h, pts[i][1]);     // n..2n-1: bottom ring (−y)
+    for(let i=1;i<n-1;i++) idx.push(0, i, i+1);                      // top fan   → group 0 (teal)
+    const topCount=idx.length;
+    for(let i=1;i<n-1;i++) idx.push(n, n+i+1, n+i);                  // bottom fan → group 1 (coral)
+    const geo=new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
+    geo.setIndex(idx);
+    geo.addGroup(0, topCount, 0);
+    geo.addGroup(topCount, idx.length-topCount, 1);
+    geo.computeVertexNormals();
+    return geo;
+  }
+  // outline templates (right side); swept & tapered so they read as feathers
+  const INNER_PTS=[[0,0.30],[0.66,0.16],[0.80,-0.06],[0.66,-0.34],[0,-0.36]];  // arm segment
+  const OUTER_PTS=[[0,0.16],[0.44,0.04],[0.60,-0.12],[0.42,-0.30],[0,-0.28]];  // hand/primaries
+  const WING_MATS=[M.birdWing, M.birdBelly];
+  function buildWing(sx){
+    // shoulder pivot (dihedral z-rot / sweep y-rot) carries the inner segment + an elbow joint
+    const piv=new THREE.Group(); piv.position.set(sx*0.26,0.08,-0.02);
+    const inner=new THREE.Mesh(wingPanel(sx,INNER_PTS,0.06), WING_MATS); inner.castShadow=!isCoarse; piv.add(inner);
+    const elbow=new THREE.Group(); elbow.position.set(sx*0.76,0,-0.06);   // at the inner tip
+    const outer=new THREE.Mesh(wingPanel(sx,OUTER_PTS,0.055), WING_MATS); outer.castShadow=!isCoarse; elbow.add(outer);
+    piv.add(elbow);
+    return { piv, elbow };
+  }
   function buildBird(){
     const g = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.SphereGeometry(0.5,8,6), M.birdBody);
-    body.scale.set(1,0.8,1.7); body.castShadow=!isCoarse; g.add(body);
-    const belly = new THREE.Mesh(new THREE.SphereGeometry(0.42,8,6), M.birdBelly);
-    belly.scale.set(0.95,0.55,1.45); belly.position.set(0,-0.17,0.05); g.add(belly);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.32,8,6), M.birdBody);
-    head.position.set(0,0.28,0.85); head.castShadow=!isCoarse; g.add(head);
-    const beak = new THREE.Mesh(new THREE.ConeGeometry(0.12,0.34,4), M.birdBeak);
-    beak.rotation.x=Math.PI/2; beak.position.set(0,0.24,1.2); g.add(beak);
-    const eL = new THREE.Mesh(new THREE.SphereGeometry(0.06,6,6), M.birdEye); eL.position.set(0.15,0.36,1.02); g.add(eL);
+    // tapered fuselage + coral breast + pointed rear
+    const body = new THREE.Mesh(new THREE.SphereGeometry(0.5,10,7), M.birdBody);
+    body.scale.set(0.82,0.72,1.7); body.castShadow=!isCoarse; g.add(body);
+    const belly = new THREE.Mesh(new THREE.SphereGeometry(0.44,10,7), M.birdBelly);
+    belly.scale.set(0.78,0.5,1.5); belly.position.set(0,-0.16,0.05); g.add(belly);
+    const rear = new THREE.Mesh(new THREE.ConeGeometry(0.32,0.95,7), M.birdBody);
+    rear.rotation.x=-Math.PI/2; rear.scale.set(1,0.62,1); rear.position.set(0,0.02,-0.92); rear.castShadow=!isCoarse; g.add(rear);
+    // head + beak + eyes
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.3,9,7), M.birdBody);
+    head.scale.set(0.96,0.94,1.06); head.position.set(0,0.3,0.86); head.castShadow=!isCoarse; g.add(head);
+    const beak = new THREE.Mesh(new THREE.ConeGeometry(0.12,0.4,4), M.birdBeak);
+    beak.rotation.x=Math.PI/2; beak.position.set(0,0.26,1.24); g.add(beak);
+    const eL = new THREE.Mesh(new THREE.SphereGeometry(0.062,8,8), M.birdEye); eL.position.set(0.15,0.4,1.04); g.add(eL);
     const eR = eL.clone(); eR.position.x=-0.15; g.add(eR);
-    const tail = new THREE.Mesh(new THREE.ConeGeometry(0.2,0.55,3), M.birdWing);
-    tail.rotation.x=-Math.PI/2; tail.scale.set(1.4,1,0.4); tail.position.set(0,0.05,-0.95); g.add(tail);
-    // two-tone wings: top = wing teal, underside (-y) = coral belly → makes the flap read
-    const wingGeo = new THREE.BoxGeometry(1.5,0.06,0.62);
-    const wingMats = [M.birdWing,M.birdWing,M.birdWing,M.birdBelly,M.birdWing,M.birdWing];
-    const pivR = new THREE.Group(); pivR.position.set(0.32,0.06,0);
-    const wingR = new THREE.Mesh(wingGeo,wingMats); wingR.position.set(0.75,0,0); wingR.castShadow=!isCoarse; pivR.add(wingR); g.add(pivR);
-    const pivL = new THREE.Group(); pivL.position.set(-0.32,0.06,0);
-    const wingL = new THREE.Mesh(wingGeo,wingMats); wingL.position.set(-0.75,0,0); wingL.castShadow=!isCoarse; pivL.add(wingL); g.add(pivL);
-    g.userData = { pivR, pivL };
+    // fanned tail (flat, spread rearward)
+    const tail = new THREE.Mesh(wingPanel(1,[[-0.4,0.02],[0.4,0.02],[0.34,-0.6],[0,-0.78],[-0.34,-0.6]],0.05), WING_MATS);
+    tail.position.set(0,0.03,-0.86); tail.castShadow=!isCoarse; g.add(tail);
+    // articulated wings — shoulder pivots + elbow joints
+    const R=buildWing(1), L=buildWing(-1);
+    g.add(R.piv); g.add(L.piv);
+    g.userData = { pivR:R.piv, pivL:L.piv, elbowR:R.elbow, elbowL:L.elbow };
     return g;
   }
   const bird = buildBird(); bird.visible=false; scene.add(bird);
@@ -1239,7 +1278,7 @@ try{
     }
   }
 
-  let flapClock=0, wingSettleR=0.12, wingSettleL=0.12, hoverPhase=0;
+  let flapClock=0, wingSettleR=0.12, wingSettleL=0.12, hoverPhase=0, tuckDisp=0, bodyPitchDisp=0;
   function animateWings(G,t,dt){
     const c=G.controls||{}, glide=c.glide||0, turn=clampN(c.turn||0,-1,1), tuck=clampN(c.tuck||0,0,1);
     const flapAmp=Math.max(0,Math.min(1,(G._flapDisp||0)));   // 0..1 flap intensity from Engine's HUD signal
@@ -1255,18 +1294,31 @@ try{
       const beat=flapAmp*beatAmp*eased;                       // +~61° up → -~48° down, scaled by lift
       base=0.12+idle+beat;                                    // soaring V rest + bob + flap beat
     }
-    // FEATURE 1 — tuck/dive: fold the wings sharply down against the body
-    if(tuck>0.03) base = base + (-0.6-base)*tuck;
-    // wings carve INTO the bank: the inside wing dips, the outside wing lifts — reads the turn
-    const carve=reduceMotion?0:turn*0.22;
-    const dihR=base-carve, dihL=base+carve;
+    // Goal 2 — PER-ARM SYNC: each wing follows ITS OWN arm, blended over the shared flap beat.
+    // player LEFT arm (c.wingL=rL) drives the on-screen LEFT wing = pivR (+x);
+    // player RIGHT arm (c.wingR=rR) drives the on-screen RIGHT wing = pivL (−x).  arm UP→wing raised,
+    // LEVEL→wing out, DOWN→wing droops — independent, so one dipped arm only bends that wing.
+    const armL=clampN(c.wingL||0,-1.2,1.2), armR=clampN(c.wingR||0,-1.2,1.2);
+    const armGain=0.55, armBlend=1-0.5*flapAmp;               // ease arm posture out while a strong flap beat plays
+    const carve=reduceMotion?0:turn*0.10;                     // small banking cue for keyboard mode (no per-arm signal)
+    let dihR=base + armGain*armL*armBlend - carve;            // on-screen LEFT wing (pivR)
+    let dihL=base + armGain*armR*armBlend + carve;            // on-screen RIGHT wing (pivL)
+    // Goal 4 — DIVE TUCK: smoothly fold BOTH wings down & sweep them back tight (diving-falcon look).
+    tuckDisp += (tuck-tuckDisp)*Math.min(1,dt*10);            // smoothed so releasing the tuck eases back to flight
+    const tuckDih=-0.42;
+    dihR=lerpN(dihR,tuckDih,tuckDisp);
+    dihL=lerpN(dihL,tuckDih,tuckDisp);
     const k=Math.min(1,dt*14);
     wingSettleR += (dihR-wingSettleR)*k;
     wingSettleL += (dihL-wingSettleL)*k;
-    bird.userData.pivR.rotation.z = wingSettleR;
+    bird.userData.pivR.rotation.z =  wingSettleR;
     bird.userData.pivL.rotation.z = -wingSettleL;
-    bird.userData.pivR.rotation.x = tuck*0.5;                 // sweep the wings back into a dive tuck
-    bird.userData.pivL.rotation.x = tuck*0.5;
+    // shoulders sweep back + pitch slightly as the wings tuck; elbows close the hand/primaries tight to the body
+    const sweep=tuckDisp*0.85, pitchBack=tuckDisp*0.22, elbowFold=tuckDisp*1.35;
+    bird.userData.pivR.rotation.y =  sweep; bird.userData.pivR.rotation.x = pitchBack;
+    bird.userData.pivL.rotation.y = -sweep; bird.userData.pivL.rotation.x = pitchBack;
+    bird.userData.elbowR.rotation.y =  elbowFold;
+    bird.userData.elbowL.rotation.y = -elbowFold;
     // gentle "alive" hover bob (visual only — never touches physics/collision, which read G.bird.y)
     if(!reduceMotion){ hoverPhase += dt*1.4*6.283; bird.position.y += Math.sin(hoverPhase)*0.06*(1-0.7*flapAmp); }
   }
@@ -1315,7 +1367,9 @@ try{
         bird.visible=true;
         bird.position.set(G.bird.x, G.bird.y, G.bird.z);
         const tuckN = clampN((G.controls&&G.controls.tuck)||0,0,1);
-        bird.rotation.set(-(G.bird.pitch||0)*0.32 - tuckN*0.55, 0, (G.bird.roll||0));   // pitch (climb=nose up) + roll (bank); tuck pitches nose DOWN
+        const pitchTarget = -(G.bird.pitch||0)*0.32 - tuckN*0.55;                        // pitch (climb=nose up) + tuck pitches nose DOWN
+        bodyPitchDisp += (pitchTarget-bodyPitchDisp)*Math.min(1,dt*6);                   // Goal 4: smooth nose-down into/out of the dive
+        bird.rotation.set(bodyPitchDisp, 0, (G.bird.roll||0));                            // + roll (bank)
         animateWings(G,t,dt);   // wing flap/carve + hover bob (adjusts bird.position.y AFTER the base set)
       } else { bird.visible=false; }
 

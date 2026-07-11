@@ -9,7 +9,8 @@ const sign=x=>x>0?1:(x<0?-1:0);
 const LIFT_MAX=3.5, ROLL_MAX=0.5, MAX_ALT=60, BANK_DEADZONE=0.12;
 const PARAMS={ gravity:4.0, baseSpeed:14, vxDamp:0.9, turnAccel:16, maxVx:8,
                climbSlow:0.35, diveFast:0.5, glideDescent:0.35,
-               diveAccel:16, termVy:20, tuckSpeed:0.35 };
+               diveAccel:16, termVy:20, tuckSpeed:0.35,
+               bankSink:2.0 };
 
 /* ---- pure functions (copied verbatim from the Engine) ---- */
 function flapImpulse(prevRaise, curRaise, dt, k, deadzone){
@@ -49,7 +50,8 @@ function pitchRate(avgRaise, neutral, deadzone, maxRate){
 function stepFlight(state, controls, dt, params){
   var p=params||PARAMS;
   var lift=controls.lift||0, turn=controls.turn||0, pitch=controls.pitch||0, glide=controls.glide||0, tuck=controls.tuck||0;
-  var descent=p.gravity*(1-glide*(1-p.glideDescent)) + tuck*(p.diveAccel||0);
+  var bank=clamp(Math.abs(turn),0,1);
+  var descent=p.gravity*(1-glide*(1-p.glideDescent)) + tuck*(p.diveAccel||0) + bank*(p.bankSink||0);
   state.vy=(state.vy||0)+lift-descent*dt;
   if(tuck>0){ var term=-(p.termVy||18); if(state.vy<term) state.vy=term; }
   state.speed=p.baseSpeed*(1-pitch*p.climbSlow)*(1+Math.max(0,-pitch)*p.diveFast)*(1+tuck*(p.tuckSpeed||0));
@@ -174,6 +176,19 @@ ok('the dive is a CONTROLLED speed-dive — vy clamps at terminal velocity, neve
   let s=mkBird(); for(let i=0;i<300;i++) s=stepFlight(s,{tuck:1},0.1); return s.vy>=-(PARAMS.termVy)-1e-9; })());
 ok('a tuck adds a small forward-speed boost', (()=>{
   const n=stepFlight(mkBird(),{tuck:0},0.1), d=stepFlight(mkBird(),{tuck:1},0.1); return d.speed>n.speed; })());
+
+// ---- ↘ Goal 3 — banking asymmetry bleeds a LITTLE altitude, far less than a full tuck-dive ----
+ok('banking (wing asymmetry) adds a little descent, but FAR less than a full tuck-dive', (()=>{
+  const level=stepFlight(mkBird(),{turn:0},0.1);
+  const bank =stepFlight(mkBird(),{turn:1},0.1);
+  const dive =stepFlight(mkBird(),{tuck:1},0.1);
+  const bankDrop=level.vy-bank.vy, diveDrop=level.vy-dive.vy;
+  return bank.vy<level.vy && bank.y<level.y            // banking loses a little altitude vs level
+      && bankDrop>0 && bankDrop < 0.25*diveDrop        // and that loss is far less than a full tuck-dive
+      && bank.vy>dive.vy; })());                        // banking is nowhere near as steep as a dive
+ok('a symmetric (no-turn) bank adds NO extra sink', (()=>{
+  const level=stepFlight(mkBird(),{turn:0},0.1), zero=stepFlight(mkBird(),{turn:0,tuck:0},0.1);
+  return level.vy===zero.vy; })());
 
 // ---- 🔝 applyCeiling — ground-relative altitude cap (kills only upward vy, never pulls down) ----
 ok('altitude caps at ground+MAX_ALT and kills upward vy', (()=>{ const b={x:0,y:200,z:0,vy:5}; applyCeiling(b,6,MAX_ALT); return b.y===66 && b.vy===0; })());

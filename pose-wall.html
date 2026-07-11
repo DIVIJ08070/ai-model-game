@@ -59,6 +59,17 @@
   #nextPose{ width:48px; height:48px; display:block; }
   #nextPoseName{ font-size:10px; font-weight:800; color:var(--good); letter-spacing:0.4px; max-width:76px; text-align:center; line-height:1.1; }
 
+  /* ---- [FIX] current-target "strike this" pose — top-centre, prominent (clear of HUD left / Next right / back-link) ---- */
+  #curPosePanel{ position:absolute; top:10px; left:50%; transform:translateX(-50%); z-index:7;
+    display:flex; flex-direction:column; align-items:center; gap:2px;
+    background:rgba(20,26,51,0.78); border:2px solid rgba(94,224,255,0.35); border-radius:14px; padding:6px 14px;
+    box-shadow:0 6px 18px rgba(0,0,0,0.4); }
+  #curPosePanel .k{ font-size:10px; letter-spacing:1.5px; text-transform:uppercase; opacity:0.75; font-weight:800; color:var(--lane); }
+  #curPose{ width:64px; height:64px; display:block; }
+  #curPoseName{ font-size:12px; font-weight:900; color:var(--good); letter-spacing:0.5px; text-align:center; line-height:1.1; }
+  #curPosePanel.pass{ border-color:var(--good); box-shadow:0 0 16px rgba(62,240,160,0.55), 0 6px 18px rgba(0,0,0,0.4); }
+  #curPosePanel.pass .k{ opacity:1; color:var(--good); }
+
   /* ---- [NEW] first-time tutorial — left side coaching panel (non-blocking; you still see the 3D wall) ---- */
   #tutPanel{ position:absolute; top:50%; left:12px; transform:translateY(-50%); z-index:12; width:min(272px,78vw);
     background:rgba(16,21,43,0.93); border:3px solid rgba(155,107,255,0.55); border-radius:18px; padding:15px 15px 13px;
@@ -122,6 +133,9 @@
     #matchMeter{ width:min(300px,90vw); }
     #nextPose{ width:40px; height:40px; }
     #nextPosePanel{ padding:6px 8px; }
+    #curPose{ width:50px; height:50px; }
+    #curPosePanel{ padding:5px 10px; }
+    #curPoseName{ font-size:11px; }
     .stat{ min-width:96px; }
     #streakV, #nextPoseName{ font-size:9px; }
     #backLink{ padding:10px 12px; }
@@ -167,6 +181,15 @@
   <div id="matchMeter" class="hidden">
     <div class="k"><span>Match</span><span id="matchPct">0%</span></div>
     <div id="matchTrack"><div id="matchFill"></div><div id="matchTick" aria-hidden="true"></div></div>
+  </div>
+
+  <!-- [FIX] current-target "strike this" pose — top-centre, prominent, always-visible reference of the
+       required pose (device-independent, so a new player always knows the pose even when the 3D hole is
+       far or, on a narrow phone, cropped as the wall swells). Clear of the HUD (left) & Next chip (right). -->
+  <div id="curPosePanel" class="hidden">
+    <div class="k">Strike this</div>
+    <canvas id="curPose" width="64" height="64" aria-hidden="true"></canvas>
+    <div id="curPoseName">&mdash;</div>
   </div>
 
   <!-- next-pose preview (DESIGN_SPEC §4.4) -->
@@ -309,11 +332,16 @@ try{
   const PASS=0.72;   // pose-match pass threshold (mirrors the Engine; drives avatar/silhouette feedback)
   const distToZ = d => -(clamp(d,0,SPAWN_DIST)/SPAWN_DIST)*FAR_Z;   // dist 60(far) → -88 ; 0(impact) → 0
   const lerpN=(a,b,t)=>a+(b-a)*t;
+  /* [FIX] the player avatar is a side "coach mirror" — pushed OFF-CENTRE (screen-left) and shrunk so the
+     CENTRE target hole is never occluded. Offset/scale are responsive: portrait phones have a narrow
+     horizontal FOV, so we tuck it nearer the edge and smaller there. The centred hole stays the focus. */
+  const AV_X = isCoarse ? -2.3 : -4.4;      // world-x offset of the avatar (negative = screen-left)
+  const AV_SCALE = isCoarse ? 0.70 : 0.82;  // coach mirror is a touch smaller than the incoming shape
 
   /* ---- bright fill lights aimed at the player avatar so YOU read clearly (the neon world is basic/emissive
        and ignores lights, so this only pops the standard-material character). ---- */
-  const avatarKey = new THREE.PointLight(0xbfe9ff, 1.15, 46, 2.0); avatarKey.position.set(0, FIG_CY+3.5, 9); scene.add(avatarKey);
-  const avatarRim = new THREE.PointLight(0x9b6bff, 0.65, 34, 2.0); avatarRim.position.set(-4.5, FIG_CY+1.5, -3); scene.add(avatarRim);
+  const avatarKey = new THREE.PointLight(0xbfe9ff, 1.15, 46, 2.0); avatarKey.position.set(AV_X, FIG_CY+3.5, 9); scene.add(avatarKey);
+  const avatarRim = new THREE.PointLight(0x9b6bff, 0.65, 34, 2.0); avatarRim.position.set(AV_X-4.2, FIG_CY+1.5, -3); scene.add(avatarRim);
 
   /* =============================== world dressing (DESIGN_SPEC §9) =============================== */
   // dark floor slab
@@ -489,7 +517,7 @@ try{
 
   /* ---- the live player avatar at the impact plane (central feedback, DESIGN_SPEC §6) ---- */
   const avatar = makeFigure({ character:true, boneR:0.14, jointR:0.17, headR:0.42, color:COL.avatarBase, opacity:0.9 });
-  avatar.group.position.set(0, FIG_CY, 0.6); scene.add(avatar.group);
+  avatar.group.position.set(AV_X, FIG_CY, 0.6); avatar.group.scale.setScalar(AV_SCALE); scene.add(avatar.group);
   const C_LANE=new THREE.Color(COL.avatarBase), C_GOOD=new THREE.Color(COL.silGood), C_WORK=new THREE.Color();
   let avatarFlashUntil = -1;
 
@@ -648,8 +676,8 @@ try{
         avatar.mat.opacity = op;
         if(avatar.glow){ avatar.glow.material.color.copy(C_WORK);
           avatar.glow.material.opacity = 0.2 + 0.45*k + (flashing?0.4:0); }
-        // subtle "locked in" pop when you cross the pass threshold
-        const wantS = (!reduced && matched) ? 1.05 : 1.0;
+        // subtle "locked in" pop when you cross the pass threshold (relative to the coach's base scale)
+        const wantS = AV_SCALE * ((!reduced && matched) ? 1.05 : 1.0);
         const cs = avatar.group.scale.x; avatar.group.scale.setScalar(cs + (wantS-cs)*clamp(dt*10,0,1));
       } else { avatar.group.visible=false; }
 
@@ -867,6 +895,7 @@ var G={
   walls:[],                  // [{ index, targetId, target, dist, state }]
   wallIndex:0,
   currentTarget:null,
+  currentPose:null,          // [FIX] active wall's full library entry (drives the "Strike this" HUD indicator)
   nextTarget:null,           // next wall's poseTarget (HUD preview)
   nextPose:null,             // next wall's full library entry (id/name/lm) for the icon
   matchScore:0,
@@ -1026,11 +1055,11 @@ function startGame(){
   G.wallIndex=0;
   var first=pickPose(0, 1);
   G.walls=[{ index:0, targetId:first.id, target:first.target, dist:SPAWN_DIST, state:'approach' }];
-  G.currentTarget=first.target;
+  G.currentTarget=first.target; G.currentPose=first;
   var nx=pickPose(1, 1);
   G.nextPose=nx; G.nextTarget=nx.target;
   if(G.control==='camera' && G.cam.on) showCamPip(true);   // keep the "YOU" webcam PIP visible during play
-  showScreen('play'); updateNextPoseUI(); updateHud();
+  showScreen('play'); updateNextPoseUI(); updateCurPoseUI(); updateHud();
 }
 
 function spawnNextWall(){
@@ -1038,11 +1067,11 @@ function spawnNextWall(){
   var level=levelForScore(G.score);
   var pose=G.nextPose || pickPose(G.wallIndex, level);   // becomes active = what the preview showed
   G.walls=[{ index:G.wallIndex, targetId:pose.id, target:pose.target, dist:SPAWN_DIST, state:'approach' }];
-  G.currentTarget=pose.target;
+  G.currentTarget=pose.target; G.currentPose=pose;
   G.matchScore=0;
   var nx=pickPose(G.wallIndex+1, level);
   G.nextPose=nx; G.nextTarget=nx.target;
-  updateNextPoseUI();
+  updateNextPoseUI(); updateCurPoseUI();
 }
 
 function resolveWall(wall){
@@ -1126,7 +1155,7 @@ function spawnTutorialWall(i){
   var def=TUTORIAL_STEPS[i]; if(!def) return;
   var pose=poseById(def.id); if(!pose) return;
   G.walls=[{ index:i, targetId:pose.id, target:pose.target, dist:SPAWN_DIST, state:'approach' }];
-  G.currentTarget=pose.target; G.matchScore=0;
+  G.currentTarget=pose.target; G.currentPose=pose; G.matchScore=0;
   G.nextPose=pose; G.nextTarget=pose.target;
   G.tutorial.matchHold=0; G.tutorial.struggle=0; G.tutorial.phaseT=0;
 }
@@ -1205,6 +1234,7 @@ function showScreen(name){
   show('hud', name==='play');
   show('matchMeter', name==='play' || name==='tutorial');   // [NEW] tutorial shows the match meter too
   show('nextPosePanel', name==='play');
+  show('curPosePanel', name==='play');                       // [FIX] "Strike this" current-pose reference (tutorial has its own diagram)
   show('tutPanel', name==='tutorial');
   if(name!=='tutorial') show('tutReadyScreen', false);      // any non-tutorial screen clears the ready card
 }
@@ -1225,6 +1255,7 @@ function updateHud(){
   var mf=$('matchFill'); if(mf&&mf.style) mf.style.width=pct+'%';
   var mp=$('matchPct'); if(mp) mp.textContent=pct+'%';
   var mm=$('matchMeter'); if(mm&&mm.classList) mm.classList.toggle('pass', G.matchScore>=PASS_THRESHOLD);
+  var cp=$('curPosePanel'); if(cp&&cp.classList) cp.classList.toggle('pass', G.matchScore>=PASS_THRESHOLD);   // [FIX] flash the pose chip green on match
 }
 function updateOverUI(){
   var a=$('overTitleA'), b=$('overTitleB'), mood=$('overMood');
@@ -1250,6 +1281,11 @@ function updateNextPoseUI(){
   try{ drawNextPose(); }catch(e){}
 }
 function drawNextPose(){ drawPoseIcon($('nextPose'), G.nextPose); }
+/* [FIX] the always-visible reference of the pose the player must strike RIGHT NOW (top-centre HUD chip). */
+function updateCurPoseUI(){
+  var nm=$('curPoseName'); if(nm) nm.textContent = G.currentPose ? G.currentPose.name : '—';
+  try{ drawPoseIcon($('curPose'), G.currentPose); }catch(e){}
+}
 /* generic mirrored stick-figure diagram of a pose, auto-fit to any square canvas (reused by the
    next-pose HUD chip AND the larger tutorial target diagram). */
 function drawPoseIcon(cv, pose){
