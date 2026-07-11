@@ -191,11 +191,310 @@
   </div>
 </div>
 
-<!-- VIEW placeholder — T3 fills the three.js View here; must set window.__pwRender(dt,t).
-     Kept an empty valid module (NO `import`) so the file runs before T3; the Engine degrades
-     gracefully while window.__pwRender is absent (SPEC §3.4). -->
+<!-- VIEW (T3) — three.js module; sets window.__pwRender(dt,t) and reads window.__pw.G each frame.
+     Deferred (runs after the classic Engine below), and wrapped in try/catch so if three.js/the CDN/
+     WebGL fail the Engine keeps running with no render — graceful degrade (SPEC §3.4). -->
 <script type="module">
-/* T3 fills the three.js View here; must set window.__pwRender(dt,t) and read window.__pw.G. */
+/* =============================== POSE WALL — VIEW (T3) ===============================
+   All three.js lives here. Reads the Engine's game state each frame via window.__pw.G and the
+   render hook window.__pwRender(dt,t); the Engine owns ALL state/rules — the View only visualizes.
+   Wrapped in try/catch so if three.js / the CDN / WebGL fail, the Engine keeps running headless
+   (graceful degrade, SPEC §3.4). World palette + look per DESIGN_SPEC §5/§6/§9. */
+import * as THREE from 'three';
+(function(){
+try{
+  const clamp=(v,a,b)=>v<a?a:(v>b?b:v);
+  const reduced = (typeof matchMedia==='function') && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const isCoarse = (typeof matchMedia==='function') &&
+    (matchMedia('(pointer: coarse)').matches || matchMedia('(max-width: 800px)').matches);
+
+  /* ---- world palette (DESIGN_SPEC §9 — [NEW] three.js material colors) ---- */
+  const COL = {
+    sky:[[0.00,'#04040c'],[0.30,'#0a0a1e'],[0.58,'#170a2f'],[0.80,'#2a1150'],[1.00,'#3b1a63']],
+    fog:0x0a0a1c,
+    tunnelFloor:0x0a0a18, gridMajor:0x5ee0ff, gridMinor:0xff5da2,
+    railLeft:0x5ee0ff, railRight:0xff5da2, portalGlow:0x9b6bff, impactRing:0xffd23f,
+    slab:0x160b2e, slabEmissive:0x2a1150, slabRim:0x5ee0ff,
+    silGood:0x3ef0a0, silWarn:0xffd23f, avatarBase:0x5ee0ff, bad:0xff3b5c
+  };
+
+  const canvas = document.getElementById('c3d');
+  if(!canvas) return;
+
+  /* ---- renderer (SPEC §8 / R1 perf: clamp pixelRatio ≤2, antialias/shadows off on coarse) ---- */
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias:!isCoarse, powerPreference:'high-performance' });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+  if('outputColorSpace' in renderer) renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.shadowMap.enabled = false;   // dark neon scene reads from emissive/basic mats; no shadows (mobile perf)
+
+  /* ---- scene / gradient sky / fog (reuse Sky Dash makeGradientSky + Fog) ---- */
+  const scene = new THREE.Scene();
+  function makeGradientSky(stops){
+    const c = document.createElement('canvas'); c.width = 16; c.height = 256;
+    const g = c.getContext('2d'); const grd = g.createLinearGradient(0,0,0,256);
+    stops.forEach(s => grd.addColorStop(s[0], s[1]));
+    g.fillStyle = grd; g.fillRect(0,0,16,256);
+    const tex = new THREE.CanvasTexture(c);
+    if('colorSpace' in tex) tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
+  scene.background = makeGradientSky(COL.sky);
+  scene.fog = new THREE.Fog(COL.fog, 24, isCoarse ? 150 : 220);
+
+  const camera = new THREE.PerspectiveCamera(56, window.innerWidth/window.innerHeight, 0.1, 600);
+  scene.add(camera);   // so the camera-parented flash plane renders
+
+  /* ---- low-key lighting (DESIGN_SPEC §9: dim hemi + one soft violet key; neon is emissive/basic) ---- */
+  scene.add(new THREE.HemisphereLight(0x3b1a63, 0x0a0a18, 0.6));
+  const key = new THREE.DirectionalLight(0x9b6bff, 0.55); key.position.set(6,16,12); scene.add(key);
+
+  /* ---- depth/figure constants ---- */
+  const SPAWN_DIST=60, FAR_Z=88, FIG_SCALE=1.3, FIG_CY=3.2, FLOOR_Y=-1.5, WALL_W=14, WALL_H=9;
+  const distToZ = d => -(clamp(d,0,SPAWN_DIST)/SPAWN_DIST)*FAR_Z;   // dist 60(far) → -88 ; 0(impact) → 0
+
+  /* =============================== world dressing (DESIGN_SPEC §9) =============================== */
+  // dark floor slab
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(64,220),
+    new THREE.MeshStandardMaterial({ color:COL.tunnelFloor, roughness:1, metalness:0 }));
+  floor.rotation.x=-Math.PI/2; floor.position.set(0, FLOOR_Y, -70); scene.add(floor);
+
+  // receding neon grid — cyan depth rails + magenta cross-lines
+  function lineGrid(pts, color, opacity){
+    const geo = new THREE.BufferGeometry().setFromPoints(pts);
+    return new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color, transparent:true, opacity, fog:true }));
+  }
+  const gy = FLOOR_Y+0.02, cyanPts=[], magPts=[];
+  for(let x=-9;x<=9;x+=3){ cyanPts.push(new THREE.Vector3(x,gy,8), new THREE.Vector3(x,gy,-152)); }
+  for(let z=8; z>-152; z-=6){ magPts.push(new THREE.Vector3(-9,gy,z), new THREE.Vector3(9,gy,z)); }
+  scene.add(lineGrid(cyanPts, COL.gridMajor, 0.28));
+  scene.add(lineGrid(magPts,  COL.gridMinor, 0.14));
+
+  // glowing side rails (left cyan, right magenta)
+  const railGeo = new THREE.BoxGeometry(0.16,0.16,160);
+  const railL = new THREE.Mesh(railGeo, new THREE.MeshBasicMaterial({color:COL.railLeft}));  railL.position.set(-9.2, FLOOR_Y+0.12, -72); scene.add(railL);
+  const railR = new THREE.Mesh(railGeo, new THREE.MeshBasicMaterial({color:COL.railRight})); railR.position.set( 9.2, FLOOR_Y+0.12, -72); scene.add(railR);
+
+  // radial texture helper (portal glow, ring shockwave, flash)
+  function radialTex(stops){
+    const c=document.createElement('canvas'); c.width=c.height=128; const gx=c.getContext('2d');
+    const grd=gx.createRadialGradient(64,64,0,64,64,64); stops.forEach(s=>grd.addColorStop(s[0],s[1]));
+    gx.fillStyle=grd; gx.fillRect(0,0,128,128);
+    const t=new THREE.CanvasTexture(c); if('colorSpace' in t) t.colorSpace=THREE.SRGBColorSpace; return t;
+  }
+  // spawn portal glow at the far plane (walls are born out of it)
+  const portalTex = radialTex([[0,'rgba(155,107,255,0.9)'],[0.4,'rgba(155,107,255,0.35)'],[1,'rgba(155,107,255,0)']]);
+  const portal = new THREE.Sprite(new THREE.SpriteMaterial({ map:portalTex, transparent:true, opacity:0.75, blending:THREE.AdditiveBlending, depthWrite:false, fog:false }));
+  portal.position.set(0, FIG_CY, -FAR_Z-3); portal.scale.set(26,20,1); scene.add(portal);
+
+  // impact-plane marker ring on the floor at dist=0
+  const impactRing = new THREE.Mesh(new THREE.RingGeometry(4.6,5.1,44),
+    new THREE.MeshBasicMaterial({ color:COL.impactRing, transparent:true, opacity:0.5, side:THREE.DoubleSide }));
+  impactRing.rotation.x=-Math.PI/2; impactRing.position.set(0, FLOOR_Y+0.04, 0); scene.add(impactRing);
+
+  /* =============================== stick-figure builder (silhouette + avatar share it) ===============================
+     Same limb primitives for both so they visually rhyme (SPEC §8). Landmarks are normalized about
+     mid-hip and scaled by shoulder-width (equivalent to normalizePose), then MIRRORED in x and
+     flipped in y (three.js y-up) so the figure reads like a mirror (Manager Decision #5). */
+  const ARM_BONES = [['luArm',11,13],['lfArm',13,15],['ruArm',12,14],['rfArm',14,16],['shoulders',11,12]];
+  const LEG_BONES = [['lThigh',23,25],['lShin',25,27],['rThigh',24,26],['rShin',26,28]];
+  const JOINT_IDS = [11,12,13,14,15,16,23,24,25,26,27,28];
+  const _UP = new THREE.Vector3(0,1,0);
+  function orientBone(mesh,a,b){
+    if(!a||!b){ mesh.visible=false; return; }
+    const dx=b.x-a.x, dy=b.y-a.y, dz=b.z-a.z, len=Math.sqrt(dx*dx+dy*dy+dz*dz);
+    if(len<1e-4){ mesh.visible=false; return; }
+    mesh.visible=true;
+    mesh.position.set((a.x+b.x)/2,(a.y+b.y)/2,(a.z+b.z)/2);
+    mesh.scale.set(1,len,1);
+    mesh.quaternion.setFromUnitVectors(_UP, new THREE.Vector3(dx/len,dy/len,dz/len));
+  }
+  function visOK(lm,i){ return !!(lm && lm[i] && (lm[i].visibility===undefined || lm[i].visibility>=0.5)); }
+
+  function makeFigure(o){
+    const group = new THREE.Group();
+    const mat = new THREE.MeshBasicMaterial({ color:o.color, transparent:true, opacity:o.opacity });
+    mat.toneMapped=false;
+    const boneGeo = new THREE.CylinderGeometry(o.boneR,o.boneR,1,6);
+    const jointGeo = new THREE.SphereGeometry(o.jointR,8,6);
+    const headGeo = new THREE.SphereGeometry(o.headR,12,10);
+    const bones = {};
+    ARM_BONES.concat([['torso',0,0]]).concat(LEG_BONES).forEach(d=>{ const m=new THREE.Mesh(boneGeo,mat); group.add(m); bones[d[0]]=m; });
+    const joints = {};
+    JOINT_IDS.forEach(i=>{ const m=new THREE.Mesh(jointGeo,mat); group.add(m); joints[i]=m; });
+    const head = new THREE.Mesh(headGeo,mat); group.add(head);
+    return { group, mat, bones, joints, head, geos:[boneGeo,jointGeo,headGeo] };
+  }
+  function figNorm(lm){
+    if(!lm||!lm[11]||!lm[12]||!lm[23]||!lm[24]) return null;
+    const mhx=(lm[23].x+lm[24].x)/2, mhy=(lm[23].y+lm[24].y)/2;
+    let sw=Math.hypot(lm[11].x-lm[12].x, lm[11].y-lm[12].y); if(sw<1e-4) sw=1e-4;
+    return function(i){ const p=lm[i]; if(!p) return null;
+      return new THREE.Vector3(-((p.x-mhx)/sw)*FIG_SCALE, -((p.y-mhy)/sw)*FIG_SCALE, 0); };
+  }
+  function updateFigure(fig, lm){
+    const P = figNorm(lm);
+    if(!P){ fig.group.visible=false; return false; }
+    fig.group.visible=true;
+    const v={}; [0,11,12,13,14,15,16,23,24,25,26,27,28].forEach(i=>{ v[i]=P(i); });
+    orientBone(fig.bones.luArm, v[11], v[13]);
+    orientBone(fig.bones.lfArm, v[13], v[15]);
+    orientBone(fig.bones.ruArm, v[12], v[14]);
+    orientBone(fig.bones.rfArm, v[14], v[16]);
+    orientBone(fig.bones.shoulders, v[11], v[12]);
+    const midSh = v[11].clone().add(v[12]).multiplyScalar(0.5);
+    orientBone(fig.bones.torso, new THREE.Vector3(0,0,0), midSh);
+    fig.head.position.copy(v[0] || midSh.clone().add(new THREE.Vector3(0,FIG_SCALE*0.7,0)));
+    [11,12,13,14,15,16,23,24].forEach(i=>{ if(v[i]){ fig.joints[i].visible=true; fig.joints[i].position.copy(v[i]); } });
+    const legs = visOK(lm,25)&&visOK(lm,26)&&visOK(lm,27)&&visOK(lm,28);
+    fig.bones.lThigh.visible=fig.bones.lShin.visible=fig.bones.rThigh.visible=fig.bones.rShin.visible=legs;
+    [25,26,27,28].forEach(i=>{ fig.joints[i].visible=legs; });
+    if(legs){
+      orientBone(fig.bones.lThigh, v[23], v[25]); orientBone(fig.bones.lShin, v[25], v[27]);
+      orientBone(fig.bones.rThigh, v[24], v[26]); orientBone(fig.bones.rShin, v[26], v[28]);
+      [25,26,27,28].forEach(i=>{ if(v[i]) fig.joints[i].position.copy(v[i]); });
+    }
+    return true;
+  }
+
+  /* ---- the live player avatar at the impact plane (central feedback, DESIGN_SPEC §6) ---- */
+  const avatar = makeFigure({ boneR:0.10, jointR:0.13, headR:0.34, color:COL.avatarBase, opacity:0.5 });
+  avatar.group.position.set(0, FIG_CY, 0.6); scene.add(avatar.group);
+  const C_LANE=new THREE.Color(COL.avatarBase), C_GOOD=new THREE.Color(COL.silGood), C_WORK=new THREE.Color();
+  let avatarFlashUntil = -1;
+
+  /* ---- the active wall: translucent slab + rim + neon silhouette hole (DESIGN_SPEC §5) ---- */
+  const wall = new THREE.Group(); wall.visible=false; scene.add(wall);
+  const slabGeo = new THREE.BoxGeometry(WALL_W, WALL_H, 0.4);
+  const slabMat = new THREE.MeshStandardMaterial({ color:COL.slab, transparent:true, opacity:0.42,
+    roughness:0.35, metalness:0.0, emissive:COL.slabEmissive, emissiveIntensity:0.25, depthWrite:false, side:THREE.DoubleSide });
+  wall.add(new THREE.Mesh(slabGeo, slabMat));
+  const rimMat = new THREE.LineBasicMaterial({ color:COL.slabRim, transparent:true, opacity:0.5 });
+  wall.add(new THREE.LineSegments(new THREE.EdgesGeometry(slabGeo), rimMat));
+  const sil = makeFigure({ boneR:0.12, jointR:0.15, headR:0.38, color:COL.silGood, opacity:1.0 });
+  sil.group.position.set(0,0,0.3); wall.add(sil.group);   // wall group is placed at y=FIG_CY, so sil mid-hip = FIG_CY
+
+  /* ---- pass/miss FX: shatter shards + ring shockwave + full-frame flash (DESIGN_SPEC §5.2/§5.3) ---- */
+  const flashMat = new THREE.MeshBasicMaterial({ color:0xffffff, transparent:true, opacity:0, depthTest:false, depthWrite:false, fog:false, side:THREE.DoubleSide });
+  const flash = new THREE.Mesh(new THREE.PlaneGeometry(6,6), flashMat);
+  flash.position.set(0,0,-0.7); flash.renderOrder=999; camera.add(flash);
+
+  const ringTex = radialTex([[0,'rgba(255,255,255,0)'],[0.55,'rgba(255,255,255,0)'],[0.72,'rgba(255,255,255,0.95)'],[0.85,'rgba(255,255,255,0.45)'],[1,'rgba(255,255,255,0)']]);
+  const ring = new THREE.Sprite(new THREE.SpriteMaterial({ map:ringTex, transparent:true, opacity:0, blending:THREE.AdditiveBlending, depthWrite:false, fog:false }));
+  ring.visible=false; scene.add(ring); let ringLife=0; const RING_TTL=0.5;
+
+  const SHARD_N = reduced ? 0 : 14;
+  const shardGeo = new THREE.TetrahedronGeometry(0.5);
+  const shards = [];
+  for(let i=0;i<SHARD_N;i++){
+    const m = new THREE.Mesh(shardGeo, new THREE.MeshBasicMaterial({ color:0xffffff, transparent:true, opacity:0 }));
+    m.visible=false; scene.add(m);
+    shards.push({ mesh:m, vx:0,vy:0,vz:0, rvx:0,rvy:0, life:0, ttl:0.45 });
+  }
+  function triggerFX(kind){
+    const c = kind==='pass' ? COL.silGood : COL.bad;
+    flashMat.color.setHex(c); flashMat.opacity = kind==='pass' ? 0.26 : 0.5;
+    ring.position.set(0, FIG_CY, 0.6); ring.material.color.setHex(c); ring.material.opacity=0.9; ring.scale.set(1,1,1); ring.visible=true; ringLife=0;
+    if(kind==='miss') avatarFlashUntil = _t + 0.3;
+    for(const sh of shards){
+      sh.mesh.visible=true; sh.mesh.material.color.setHex(c); sh.mesh.material.opacity=1;
+      sh.mesh.position.set((Math.random()-0.5)*5, FIG_CY+(Math.random()-0.5)*5, 0.4);
+      sh.mesh.scale.setScalar(0.4+Math.random()*0.5);
+      sh.vx=(Math.random()-0.5)*7; sh.vy=(Math.random()-0.5)*6+2; sh.vz=6+Math.random()*11;   // fly outward + past the camera (+z)
+      sh.rvx=(Math.random()-0.5)*11; sh.rvy=(Math.random()-0.5)*11; sh.life=0; sh.ttl=0.45;
+    }
+  }
+  function stepFX(dt){
+    if(flashMat.opacity>0) flashMat.opacity = Math.max(0, flashMat.opacity - dt*(reduced?2.4:3.8));
+    if(ring.visible){ ringLife+=dt; const p=ringLife/RING_TTL;
+      if(p>=1){ ring.visible=false; } else { const s=1+p*11; ring.scale.set(s,s,1); ring.material.opacity=0.9*(1-p); } }
+    for(const sh of shards){ if(!sh.mesh.visible) continue; sh.life+=dt;
+      if(sh.life>=sh.ttl){ sh.mesh.visible=false; continue; }
+      sh.mesh.position.x+=sh.vx*dt; sh.mesh.position.y+=sh.vy*dt; sh.mesh.position.z+=sh.vz*dt;
+      sh.mesh.rotation.x+=sh.rvx*dt; sh.mesh.rotation.y+=sh.rvy*dt;
+      sh.mesh.material.opacity = 1-(sh.life/sh.ttl);
+    }
+  }
+
+  /* ---- camera: at the player's position looking down the depth axis, smooth lerp (SPEC §8).
+       Aimed at the figure's visual centre (~FIG_CY+1.3) and pulled back so an arms-up avatar frames fully. ---- */
+  const CAM_Y=FIG_CY+2.1, CAM_Z=13.5, LOOK_Y=FIG_CY+1.3;
+  const camPos=new THREE.Vector3(0, CAM_Y, CAM_Z), camLook=new THREE.Vector3(0, LOOK_Y, -28);
+  const _tp=new THREE.Vector3(), _tl=new THREE.Vector3();
+  function updateCamera(dt,t){
+    const sway = reduced ? 0 : Math.sin(t*0.3)*0.5;
+    _tp.set(sway, CAM_Y, CAM_Z);
+    _tl.set(sway*0.5, LOOK_Y, -28);
+    const a = reduced ? 1 : 1-Math.pow(0.0016, Math.min(dt,0.05));
+    camPos.lerp(_tp,a); camLook.lerp(_tl,a);
+    camera.position.copy(camPos); camera.lookAt(camLook);
+  }
+
+  /* ---- engine bridge (read-only) ---- */
+  let POSE_LIBRARY=null;
+  function poseById(id){ if(!POSE_LIBRARY) return null; for(let i=0;i<POSE_LIBRARY.length;i++){ if(POSE_LIBRARY[i].id===id) return POSE_LIBRARY[i]; } return null; }
+
+  /* =============================== the render hook the Engine calls every frame =============================== */
+  let prevScore=0, prevLives=3, prevScreen='', _t=0;
+  window.__pwRender = function(dt,t){
+    try{
+      dt = Math.min(dt||0.016, 0.05); _t=t;
+      const PW = window.__pw || {}; const G = PW.G;
+      if(PW.POSE_LIBRARY) POSE_LIBRARY = PW.POSE_LIBRARY;
+      if(!G){ updateCamera(dt,t); renderer.render(scene,camera); return; }
+
+      // resolution FX from Engine deltas (the resolved wall is replaced same-frame, so watch score/lives)
+      if(prevScreen!=='play' && G.screen==='play'){ prevScore=G.score; prevLives=G.lives; }
+      if(G.score>prevScore) triggerFX('pass');
+      if(G.lives<prevLives) triggerFX('miss');
+      prevScore=G.score; prevLives=G.lives; prevScreen=G.screen;
+
+      // active wall + neon silhouette
+      const w = (G.walls && G.walls[0]) ? G.walls[0] : null;
+      if(w && G.screen==='play'){
+        wall.visible=true;
+        wall.position.set(0, FIG_CY, distToZ(w.dist));
+        const pose = poseById(w.targetId);
+        if(pose){
+          updateFigure(sil, pose.lm);
+          const matched = (G.matchScore||0) >= 0.72;
+          const col = (pose.tier>=3 && !matched) ? COL.silWarn : COL.silGood;
+          sil.mat.color.setHex(col);
+          sil.mat.opacity = (reduced||matched) ? 1 : 0.82+0.18*(0.5+0.5*Math.sin(t*Math.PI*3));   // gentle ~1.5Hz pulse
+        }
+      } else { wall.visible=false; }
+
+      // live avatar — camera: smoothed landmarks ; keyboard: committed pose fixture (SPEC §8 / DESIGN_SPEC §6)
+      let src=null;
+      if(G.control==='camera'){ src = (G.cam && G.cam.seen) ? G.cam.smoothed : null; }
+      else { src = G.kbLm; }
+      if(src && updateFigure(avatar, src)){
+        const k = clamp((G.matchScore||0)/0.72, 0, 1);
+        C_WORK.copy(C_LANE).lerp(C_GOOD, k);
+        let op = 0.42 + 0.43*k;
+        if(t < avatarFlashUntil){ C_WORK.setHex(COL.bad); op = 0.9; }
+        avatar.mat.color.copy(C_WORK); avatar.mat.opacity = op;
+      } else { avatar.group.visible=false; }
+
+      stepFX(dt);
+      updateCamera(dt,t);
+      renderer.render(scene,camera);
+    }catch(e){ /* never throw back into the Engine loop */ }
+  };
+
+  /* ---- resize (SPEC §8 / R1) ---- */
+  function onResize(){
+    const w=window.innerWidth, h=window.innerHeight;
+    camera.aspect=w/h; camera.updateProjectionMatrix();
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
+    renderer.setSize(w,h,false);
+  }
+  window.addEventListener('resize', onResize);
+}catch(err){
+  /* View failed to initialise (offline CDN / no WebGL). The Engine keeps running — graceful degrade. */
+  try{ console.warn('[pose-wall view] disabled:', err && err.message); }catch(e){}
+}
+})();
 </script>
 
 <!-- ENGINE — classic script, NO three.js (SPEC §3.4). Placed LAST (satisfies PRD §6 "last
