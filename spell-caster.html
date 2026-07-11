@@ -1,0 +1,917 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="theme-color" content="#0c1022" />
+<title>Spell Caster</title>
+<!-- three.js importmap (View block only — must precede the module script). SPEC §3.1/§3.3 -->
+<script type="importmap">{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}</script>
+<style>
+  /* ---- [ARCADE] :root tokens (verbatim from sky-dash.html line 15) + [NEW] arcane/fire ---- */
+  :root{ --bg:#0c1022; --ink:#eaf0ff; --lane:#5ee0ff; --accent:#ff5da2; --good:#3ef0a0; --warn:#ffd23f; --bad:#ff3b5c; }
+  :root{ --arcane:#7c5cff; }   /* [NEW alias of an existing arcade purple] — Lightning + enemy rim */
+  :root{ --fire:#ff8a3c; }     /* [NEW] fireball orange */
+
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ margin:0; height:100%; width:100%; overflow:hidden; position:fixed; inset:0; background:var(--bg); color:var(--ink);
+    font-family:'Trebuchet MS','Segoe UI',system-ui,-apple-system,sans-serif; -webkit-user-select:none; user-select:none; touch-action:none; }
+  #c3d{ position:absolute; inset:0; display:block; width:100%; height:100%; }
+  .hidden{ display:none !important; }
+
+  /* ---- [ARCADE] back-link (DESIGN §4) ---- */
+  #backLink{ position:fixed; top:12px; left:12px; z-index:30; display:inline-flex; align-items:center; gap:6px;
+    background:rgba(20,26,51,0.72); border:2px solid rgba(94,224,255,0.35); color:var(--lane); border-radius:12px;
+    padding:8px 12px; font-weight:800; font-size:13px; text-decoration:none; }
+  #backLink:hover{ border-color:var(--lane); background:rgba(94,224,255,0.14); }
+
+  /* ---- [NEW] casting overlay (Engine-drawn 2D canvas, DESIGN §7) ---- */
+  #castCanvas{ position:absolute; inset:0; z-index:5; width:100%; height:100%; pointer-events:none; }
+
+  /* ---- [ARCADE] webcam PIP — neon "YOU" panel (DESIGN §12) ---- */
+  #camWrap{ position:absolute; right:14px; bottom:14px; z-index:9; width:clamp(132px,26vw,200px); aspect-ratio:4/3;
+    border-radius:16px; overflow:hidden; background:#05070f; border:3px solid var(--lane);
+    box-shadow:0 0 0 2px rgba(5,7,15,0.9), 0 0 22px rgba(94,224,255,0.55), 0 10px 26px rgba(0,0,0,0.55); }
+  #cam{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; transform:scaleX(-1); }
+  #camLabel{ position:absolute; top:7px; left:7px; z-index:2; padding:2px 9px; border-radius:999px; pointer-events:none;
+    font-weight:900; font-size:11px; letter-spacing:1.5px; color:#04121a;
+    background:linear-gradient(180deg,var(--lane),#39c7e6); box-shadow:0 2px 6px rgba(0,0,0,0.45); }
+
+  /* ---- [NEW] HUD stack (DESIGN §6.1) ---- */
+  #hud{ position:absolute; top:56px; left:12px; z-index:7; display:flex; flex-direction:column; gap:8px; }
+  #hud:not(.hidden){ animation:hudInL .42s ease-out; }
+  @keyframes hudInL{ from{ opacity:0; transform:translateX(-14px);} to{ opacity:1; transform:none;} }
+  .stat{ background:rgba(20,26,51,0.72); border:2px solid rgba(255,255,255,0.12); border-radius:12px; padding:6px 12px; min-width:110px; }
+  .stat .k{ font-size:10px; letter-spacing:1.5px; text-transform:uppercase; opacity:0.65; font-weight:800; }
+  .stat .v{ font-size:22px; font-weight:900; line-height:1.05; font-variant-numeric:tabular-nums; }
+  .mini{ display:flex; gap:8px; } .mini .stat{ min-width:0; }
+  #waveV{ color:var(--lane); }
+  #scoreV{ color:var(--good); display:inline-block; transform-origin:left center; }
+  #scoreV.pop{ animation:applepop .34s cubic-bezier(.2,.9,.25,1); }
+  @keyframes applepop{ 0%{ transform:scale(1); text-shadow:none;} 32%{ transform:scale(1.4); text-shadow:0 0 16px rgba(62,240,160,0.95);}
+    62%{ transform:scale(0.94);} 100%{ transform:scale(1); text-shadow:none;} }
+  #bestV{ color:var(--ink); opacity:.8; }
+  #waveV.up{ animation:waveup .5s ease-out; }
+  @keyframes waveup{ 0%{ color:var(--warn); transform:scale(1.25);} 100%{ color:var(--lane); transform:none;} }
+
+  /* HP bar (DESIGN §6.1) */
+  #hpWrap{ background:rgba(20,26,51,0.72); border:2px solid rgba(255,255,255,0.12); border-radius:12px; padding:6px 12px; min-width:200px; }
+  #hpWrap .k{ font-size:10px; letter-spacing:1.5px; text-transform:uppercase; opacity:0.65; font-weight:800; display:flex; justify-content:space-between; }
+  #hpWrap .k b{ color:var(--good); font-weight:900; font-variant-numeric:tabular-nums; }
+  #hpTrack{ position:relative; height:14px; border-radius:8px; background:rgba(0,0,0,0.4); overflow:hidden; margin-top:5px; }
+  #hpBar{ position:absolute; left:0; top:0; height:100%; width:100%; border-radius:8px;
+    background:var(--good); transition:width .18s ease-out, background-color .25s linear; }
+  #hpTrack.low{ animation:hpPulse 1s ease-in-out infinite; }
+  @keyframes hpPulse{ 0%,100%{ box-shadow:0 0 0 0 rgba(255,59,92,0);} 50%{ box-shadow:0 0 10px 1px rgba(255,59,92,0.6);} }
+
+  /* ---- [NEW] glyph legend (DESIGN §6.2) ---- */
+  #glyphLegend{ position:absolute; top:56px; right:12px; z-index:7; display:flex; flex-direction:column; gap:4px;
+    background:rgba(20,26,51,0.72); border:2px solid rgba(255,255,255,0.12); border-radius:12px; padding:8px 10px; }
+  #glyphLegend:not(.hidden){ animation:hudInR .42s ease-out; }
+  @keyframes hudInR{ from{ opacity:0; transform:translateX(14px);} to{ opacity:1; transform:none;} }
+  .legrow{ display:flex; align-items:center; gap:8px; }
+  .legrow svg{ width:20px; height:20px; flex:0 0 20px; fill:none; }
+  .legrow .nm{ font-size:12px; font-weight:800; color:var(--ink); }
+  .legrow .kb{ margin-left:auto; font-size:10px; font-weight:800; opacity:.5; font-variant-numeric:tabular-nums; }
+
+  /* ---- [NEW] last-cast pill (DESIGN §6.3, BUG-001 fix: white text + accent on border+dot only) ---- */
+  #lastCast{ position:absolute; left:50%; bottom:16px; transform:translateX(-50%); z-index:7;
+    background:rgba(20,26,51,0.8); border:2px solid rgba(255,255,255,0.14); border-radius:999px; padding:8px 16px;
+    color:var(--ink); font-weight:800; font-size:14px; display:inline-flex; align-items:center; gap:8px; letter-spacing:.3px;
+    opacity:0; transition:opacity .2s ease-out; }
+  #lastCast.show{ opacity:1; }
+  #lastCast .dot{ width:10px; height:10px; border-radius:999px; flex:0 0 10px; color:var(--ink); background:currentColor; box-shadow:0 0 8px currentColor; }
+
+  /* ---- [ARCADE] screens (DESIGN §5) ---- */
+  .screen{ position:absolute; inset:0; z-index:20; display:flex; align-items:center; justify-content:center; padding:20px; text-align:center;
+    background:radial-gradient(120% 120% at 50% 0%, rgba(124,92,255,0.22), rgba(12,16,34,0.9)); backdrop-filter:blur(3px); }
+  .screen:not(.hidden){ animation:screenIn .3s ease-out; }
+  @keyframes screenIn{ from{ opacity:0; } to{ opacity:1; } }
+  .card{ width:min(560px,94vw); background:rgba(16,21,43,0.92); border:3px solid rgba(94,224,255,0.35); border-radius:24px; padding:26px 22px;
+    box-shadow:0 18px 50px rgba(0,0,0,0.55); max-height:94dvh; overflow:auto; }
+  .screen:not(.hidden) .card{ animation:cardIn .42s cubic-bezier(.2,.9,.25,1); }
+  @keyframes cardIn{ 0%{ opacity:0; transform:translateY(16px) scale(0.93);} 100%{ opacity:1; transform:none;} }
+  .title{ font-weight:900; line-height:0.92; margin:0 0 6px; }
+  .title .a,.title .b{ display:block; font-size:clamp(30px,8vw,54px); -webkit-text-stroke:2px #08122a; paint-order:stroke fill; text-shadow:0 4px 0 #071026; }
+  .title .a{ color:var(--lane); } .title .b{ color:var(--accent); }
+  .sub{ opacity:0.85; font-size:14px; margin:8px 0 16px; line-height:1.5; }
+  .btn{ appearance:none; border:none; border-radius:16px; cursor:pointer; font-family:inherit; font-weight:900; font-size:20px; padding:15px 22px; width:100%;
+    background:linear-gradient(180deg,var(--accent),#e0407f); color:#fff; box-shadow:0 6px 0 #7e1f47; letter-spacing:0.5px; }
+  .btn:active{ transform:translateY(4px); box-shadow:0 2px 0 #7e1f47; }
+  .btn.ghost{ background:transparent; border:2px solid rgba(255,255,255,0.3); color:var(--ink); box-shadow:none; }
+  .ctarow{ display:flex; gap:8px; margin-top:10px; } .ctarow .btn{ font-size:15px; padding:12px 8px; min-height:44px; }
+  .linkbtn{ background:none; border:none; color:var(--lane); font-weight:800; font-size:14px; cursor:pointer; text-decoration:underline; text-underline-offset:3px; font-family:inherit; margin-top:12px; }
+  .howtbl{ width:100%; border-collapse:collapse; font-size:13px; margin:6px 0 4px; }
+  .howtbl th,.howtbl td{ border:1px solid rgba(255,255,255,0.1); padding:7px 8px; text-align:center; }
+  .howtbl th{ color:var(--lane); font-size:12px; } .howtbl td.act{ text-align:left; font-weight:800; }
+  .mood{ font-size:19px; font-weight:900; margin:0 0 12px; }
+  .gostat{ display:flex; gap:10px; margin:14px 0 16px; }
+  .gostat .s{ flex:1; background:rgba(124,92,255,0.14); border:2px solid rgba(124,92,255,0.5); border-radius:14px; padding:10px 6px; }
+  .gostat .n{ font-size:26px; font-weight:900; color:#7c5cff; }
+  .gostat .l{ font-size:10px; text-transform:uppercase; letter-spacing:1px; opacity:0.7; font-weight:800; }
+
+  /* [NEW] lobby SPELL/CASTER title override (DESIGN §5) */
+  #lobbyScreen .title .a{ color:var(--arcane); }   /* SPELL  */
+  #lobbyScreen .title .b{ color:var(--lane); }      /* CASTER */
+  #calibScreen .title .a{ color:var(--arcane); }
+  #calibScreen .title .b{ color:var(--lane); }
+
+  /* [NEW] game-over win/lose theming (DESIGN §8) */
+  #overScreen .card.win{ border-color:var(--good); box-shadow:0 0 0 2px rgba(62,240,160,.35), 0 18px 50px rgba(0,0,0,.55); }
+  #overScreen .card.lose{ border-color:var(--bad); box-shadow:0 0 0 2px rgba(255,59,92,.35), 0 18px 50px rgba(0,0,0,.55); }
+  #overIcon{ font-size:48px; line-height:1; margin-bottom:6px; filter:drop-shadow(0 3px 8px rgba(0,0,0,.5)); }
+
+  /* ---- [ARCADE] focus-visible (DESIGN §10) ---- */
+  *:focus-visible{ outline:3px solid var(--lane); outline-offset:2px; }
+
+  /* ---- [NEW] responsive (DESIGN §9.1) ---- */
+  @media (max-width:400px){
+    #hud{ top:52px; left:8px; } #hpWrap{ min-width:160px; }
+    #glyphLegend .nm, #glyphLegend .kb{ display:none; }
+    #glyphLegend{ top:52px; right:8px; padding:6px 7px; }
+    #backLink{ padding:10px 12px; }
+    #lastCast{ font-size:13px; padding:7px 12px; }
+  }
+  @media (max-height:430px){ #camWrap{ bottom:64px; width:clamp(112px,22vw,150px); } }
+  @media (min-width:768px){ #camWrap{ width:clamp(150px,24vw,190px); } }
+  @media (min-width:1100px){ #camWrap{ width:clamp(190px,17vw,220px); } }
+
+  /* ---- [NEW] reduced motion (DESIGN §9.2) ---- */
+  @media (prefers-reduced-motion: reduce){
+    .screen:not(.hidden), .screen:not(.hidden) .card,
+    #hud:not(.hidden), #glyphLegend:not(.hidden), #lastCast:not(.hidden),
+    #scoreV.pop, #waveV.up, #hpTrack.low{ animation:none; }
+    #hpBar{ transition:none; }
+  }
+</style>
+</head>
+<body>
+<canvas id="c3d"></canvas>
+
+<!-- fixed back-to-arcade link (SPEC §11 / DESIGN §4) -->
+<a id="backLink" href="/">&larr; Arcade</a>
+
+<!-- casting overlay (Engine-drawn 2D canvas, DESIGN §7) — above #c3d, below #hud -->
+<canvas id="castCanvas" aria-hidden="true"></canvas>
+
+<!-- webcam PIP (DESIGN §12) -->
+<div id="camWrap" class="hidden">
+  <video id="cam" playsinline muted autoplay></video>
+  <div id="camLabel">YOU</div>
+</div>
+
+<!-- in-game HUD (DESIGN §6) -->
+<div id="hud" class="hidden">
+  <div id="hpWrap"><div class="k"><span>HP</span><b id="hpV">100</b></div><div id="hpTrack" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100"><div id="hpBar"></div></div></div>
+  <div class="mini">
+    <div class="stat"><div class="k">Wave</div><div class="v" id="waveV" aria-live="polite">1/5</div></div>
+    <div class="stat"><div class="k">Score</div><div class="v" id="scoreV" aria-live="polite">0</div></div>
+    <div class="stat"><div class="k">Best</div><div class="v" id="bestV">0</div></div>
+  </div>
+</div>
+
+<!-- glyph legend (DESIGN §6.2) -->
+<div id="glyphLegend" class="hidden" aria-hidden="true">
+  <div class="legrow"><svg viewBox="0 0 20 20"><line x1="4" y1="16" x2="16" y2="4" stroke="#5ee0ff" stroke-width="2" stroke-linecap="round"/></svg><span class="nm">Bolt</span><span class="kb">1</span></div>
+  <div class="legrow"><svg viewBox="0 0 20 20"><polygon points="10,3 17,17 3,17" stroke="#ff8a3c" stroke-width="2" stroke-linejoin="round"/></svg><span class="nm">Fireball</span><span class="kb">2</span></div>
+  <div class="legrow"><svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="7" stroke="#3ef0a0" stroke-width="2"/></svg><span class="nm">Shield</span><span class="kb">3</span></div>
+  <div class="legrow"><svg viewBox="0 0 20 20"><polyline points="5,3 12,9 7,11 15,17" stroke="#7c5cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="nm">Lightning</span><span class="kb">4</span></div>
+</div>
+
+<!-- last-cast readout (DESIGN §6.3) -->
+<div id="lastCast" class="hidden"><span class="dot" id="lastCastDot"></span><span id="lastCastText">&#9889; Bolt</span></div>
+
+<!-- LOBBY (DESIGN §5) -->
+<div class="screen" id="lobbyScreen">
+  <div class="card">
+    <h1 class="title"><span class="a">SPELL</span><span class="b">CASTER</span></h1>
+    <div class="sub">Lean to dodge, draw glyphs in the air to cast. Clear 5 waves to win. Strike a &#129485; T-pose (or press Keys) to begin.</div>
+    <button class="btn" id="playCamBtn">&#9654; Camera</button>
+    <div class="ctarow"><button class="btn ghost" id="playKeysBtn">&#9000; Keys</button></div>
+    <div id="camMsg" class="sub" style="text-align:center;color:var(--warn);min-height:1px;margin:10px 0 0"></div>
+    <div id="lobbyReadout" class="sub" style="margin:8px 0 0;color:var(--lane)" aria-live="polite">&#129485; Body: &mdash;   &middot;   &#9995; Hand: &mdash;</div>
+    <button class="linkbtn" id="howToBtn">How to cast</button>
+    <div id="howto" class="hidden">
+      <table class="howtbl">
+        <tr><th>Move</th><th>&#127909; Camera</th><th>&#9000; Keys</th></tr>
+        <tr><td class="act">Strafe left / right</td><td>Lean torso left / right</td><td>&#9664; / &#9654; (A / D)</td></tr>
+        <tr><td class="act">Duck (high attacks)</td><td>Crouch down</td><td>&#9660; (S)</td></tr>
+        <tr><td class="act">Bolt (line)</td><td>Draw a &#9585; line</td><td>1 / Space</td></tr>
+        <tr><td class="act">Fireball (triangle)</td><td>Draw a &#9651; triangle</td><td>2</td></tr>
+        <tr><td class="act">Shield (circle)</td><td>Draw a &#9711; circle</td><td>3</td></tr>
+        <tr><td class="act">Lightning (zigzag)</td><td>Draw a &#9889; zigzag</td><td>4</td></tr>
+        <tr><td class="act">Start / Restart</td><td>Hold &#129485; T-pose ~0.6s</td><td>Enter</td></tr>
+      </table>
+      <div class="sub" style="margin:0">Point your index finger up to start drawing; drop it to cast. Red bolts &rarr; <b>strafe</b>; amber bolts &rarr; <b>duck</b>.</div>
+    </div>
+  </div>
+</div>
+
+<!-- CALIBRATION (DESIGN §5.1) -->
+<div class="screen hidden" id="calibScreen"><div class="card">
+  <h1 class="title"><span class="a">GET</span><span class="b">READY</span></h1>
+  <div class="sub">&#129485; Stand naturally facing the camera &mdash; calibrating your stance&hellip;</div>
+</div></div>
+
+<!-- GAME OVER / VICTORY (DESIGN §8) -->
+<div class="screen hidden" id="overScreen"><div class="card" id="overCard">
+  <div id="overIcon">&#127942;</div>
+  <h1 class="title"><span class="a" id="overTitleA">MAGE</span><span class="b" id="overTitleB">VICTORIOUS</span></h1>
+  <div id="overMood" class="mood" aria-live="polite">&#127942; All 5 waves cleared!</div>
+  <div class="gostat">
+    <div class="s"><div class="n" id="overScore">0</div><div class="l">Score</div></div>
+    <div class="s"><div class="n" id="overBest">0</div><div class="l">Best</div></div>
+    <div class="s"><div class="n" id="overWave">5/5</div><div class="l">Waves</div></div>
+  </div>
+  <div id="newBest" class="hidden" style="color:var(--good);font-weight:900;margin-bottom:8px">&#127881; New personal best!</div>
+  <div class="sub">&#129485; T-pose to cast again</div>
+  <button class="btn" id="againBtn">&#9654; Play again</button>
+</div></div>
+
+<!-- VIEW — three.js module (T3). PLACEHOLDER. Loaded BEFORE the Engine; the Engine is LAST. -->
+<script type="module">
+/* T3 fills the three.js View here; must set window.__spellRender(dt,t).
+   Placeholder stub (T2): NO three.js yet. The Engine runs standalone without it —
+   its RAF loop calls window.__spellRender only if it has been defined (try/catch). */
+</script>
+
+<!-- ENGINE — classic script, no three.js (placed LAST). Smoke test extracts the block below by its sentinel. -->
+<script>
+/*__SPELL_ENGINE__*/
+/* Spell Caster — Engine. Pure control math (§5) + glyph recognizer + G state (§9) + dual-detector
+   alternating pump (§3.2) + camera boot + warm-up + wave/HP/cast rules (§8) + calibration (§5.8) +
+   keyboard fallback (§7.3) + casting-overlay 2D draw (§7/§12) + RAF loop + globalThis.__spell
+   exposer (§3.4). Contains NO three.js / NO import. The View module (above) reads engine state via
+   the optional render hook window.__spellRender(dt,t). */
+
+/* ---------------------------------- helpers ---------------------------------- */
+var clamp=function(v,a,b){ return v<a?a:(v>b?b:v); };
+var lerp=function(a,b,t){ return a+(b-a)*t; };
+var $=function(id){ return (typeof document!=='undefined'&&document.getElementById)?document.getElementById(id):null; };
+function mm(q){ try{ return (typeof window!=='undefined'&&window.matchMedia)?!!window.matchMedia(q).matches:false; }catch(e){ return false; } }
+function isCoarse(){ return mm('(pointer: coarse)')||mm('(max-width: 800px)'); }
+function prefersReduced(){ return mm('(prefers-reduced-motion: reduce)'); }
+
+/* -------------------------------- tuning constants (§5, mirrored into the logic test) --------- */
+var LEAN_STEP=0.22;      // |lean| needed to commit a side dodge slot
+var LEAN_HYST=0.08;      // hysteresis band to return to centre (anti-jitter)
+var LEAN_EMA=0.4;        // per-frame smoothing of leanOffset
+var DUCK_DROP=0.09;      // shoulder-Y rise above standing height (norm frame units) = crouch
+var INDEX_EXT=0.05;      // index tip must clear its PIP by this (norm) to be "extended"
+var PINCH_TH=0.35;       // thumb<->index distance / hand-size below this = pinch
+var STROKE_MIN_PTS=8;    // fewer sampled points than this -> fizzle (null)
+var STROKE_MIN_LEN=0.5;  // total path length (unit-normalized space) below this -> fizzle
+var CORNER_ANGLE=1.0;    // rad (~57deg): a per-vertex turn sharper than this is a "corner"
+var GESTURE_HOLD=0.6;    // seconds a T-pose must be held to start/restart
+var EPS=1e-6;
+
+/* -------------------------------- game tuning constants (§8) --------------------------------- */
+var MAX_HP=100, HIT_DMG=20, ENEMY_HP=2, WAVES=5;
+var KILL_POINTS=100, WAVE_BONUS=250, WIN_HP_BONUS=5;
+var DUCK_TIME=0.6, DUCK_COOLDOWN=0.35;
+var DRIFT_TIME=1.4, TELE_TIME=1.2, EPROJ_SPEED=6, SHIELD_TIME=6;
+var CALIB_TIME=1.0, CALIB_HARD=3.0;
+var FLASH_DUR=0.45, FIZZLE_DUR=0.4, STROKE_MAX=128, LASTCAST_TIME=1.2;
+
+/* ===================== PURE FUNCTIONS — mirrored VERBATIM into tests/spell-caster.logic.test.js =====================
+   Every function below is f(landmarks/points)->number|bool|string: no DOM, no G, no globals besides the
+   tuning consts above (also mirrored). QA copies them verbatim and tests sign/dead-zone/clamp/classification. */
+
+/* 5.1 leanOffset — torso shoulder-vs-hip tilt, size-normalized, selfie-mirrored (+right). */
+function leanOffset(lm, center){
+  if(!lm || !lm[11] || !lm[12] || !lm[23] || !lm[24]) return 0;
+  var shMidX=(lm[11].x+lm[12].x)/2;
+  var hipMidX=(lm[23].x+lm[24].x)/2;
+  var shoulderW=Math.max(EPS, Math.abs(lm[11].x-lm[12].x));
+  var raw=(shMidX-hipMidX)/shoulderW;
+  var mirrored=-raw;
+  return mirrored-(center||0);
+}
+
+/* 5.2 pickDodge — 3 symmetric slots (-1/0/1), dead-zone + hysteresis. */
+function pickDodge(lean, cur, step, hyst){
+  step=(step==null)?LEAN_STEP:step; hyst=(hyst==null)?LEAN_HYST:hyst;
+  if(lean<=-step) return -1;
+  if(lean>=step) return 1;
+  if(lean>-(step-hyst) && lean<(step-hyst)) return 0;
+  return cur;
+}
+
+/* 5.3 isDuck — shoulders drop below the calibrated standing height. */
+function isDuck(lm, standingY, th){
+  if(!lm || !lm[11] || !lm[12]) return false;
+  var shY=(lm[11].y+lm[12].y)/2;
+  th=(th==null)?DUCK_DROP:th;
+  return (shY-standingY)>th;
+}
+
+/* 5.4 isIndexExtended — index tip clearly above its PIP (arms the stroke). */
+function isIndexExtended(hand){
+  if(!hand || hand.length<9) return false;
+  return (hand[6].y-hand[8].y)>INDEX_EXT;
+}
+
+/* 5.5 isPinch — thumb<->index distance, hand-size normalized. */
+function isPinch(hand, th){
+  if(!hand || hand.length<9) return false;
+  var handSize=Math.hypot(hand[0].x-hand[9].x, hand[0].y-hand[9].y)+EPS;
+  var d=Math.hypot(hand[4].x-hand[8].x, hand[4].y-hand[8].y);
+  th=(th==null)?PINCH_TH:th;
+  return d/handSize<th;
+}
+
+/* 5.6 recognizer helpers — resample + normalize + features (pure). */
+function resampleStroke(points, count){
+  if(points.length<2) return points.slice();
+  var pts=points.slice(), total=0, i;
+  for(i=1;i<pts.length;i++) total+=Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y);
+  if(total<EPS){ var flat=[]; for(i=0;i<count;i++) flat.push({x:pts[0].x,y:pts[0].y}); return flat; }
+  var interval=total/(count-1);
+  var out=[{x:pts[0].x,y:pts[0].y}], D=0;
+  i=1;
+  while(i<pts.length){
+    var p1=pts[i-1], p2=pts[i];
+    var d=Math.hypot(p2.x-p1.x, p2.y-p1.y);
+    if(D+d>=interval && d>EPS){
+      var t=(interval-D)/d;
+      var np={x:p1.x+t*(p2.x-p1.x), y:p1.y+t*(p2.y-p1.y)};
+      out.push(np); pts.splice(i,0,np); D=0;
+    } else { D+=d; }
+    i++;
+  }
+  while(out.length<count) out.push({x:pts[pts.length-1].x, y:pts[pts.length-1].y});
+  if(out.length>count) out=out.slice(0,count);
+  return out;
+}
+function normalizeStroke(points){
+  var n=points.length, i, minx=Infinity,miny=Infinity,maxx=-Infinity,maxy=-Infinity;
+  for(i=0;i<n;i++){ var p=points[i];
+    if(p.x<minx)minx=p.x; if(p.y<miny)miny=p.y; if(p.x>maxx)maxx=p.x; if(p.y>maxy)maxy=p.y; }
+  var w=maxx-minx, h=maxy-miny, scale=Math.max(w,h,EPS), norm=[];
+  for(i=0;i<n;i++) norm.push({x:(points[i].x-minx)/scale, y:(points[i].y-miny)/scale});
+  return { pts:resampleStroke(norm,24), w:w, h:h };
+}
+function strokeFeatures(pts){
+  var n=pts.length, i, pathLen=0;
+  for(i=1;i<n;i++) pathLen+=Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y);
+  var endDist=Math.hypot(pts[n-1].x-pts[0].x, pts[n-1].y-pts[0].y);
+  var straightness=endDist/Math.max(EPS,pathLen);
+  var netTurn=0, absTurn=0, corners=0, reversals=0, lastSharp=0;
+  for(i=1;i<n-1;i++){
+    var ax=pts[i].x-pts[i-1].x, ay=pts[i].y-pts[i-1].y;
+    var bx=pts[i+1].x-pts[i].x, by=pts[i+1].y-pts[i].y;
+    if(Math.hypot(ax,ay)<EPS || Math.hypot(bx,by)<EPS) continue;
+    var ang=Math.atan2(ax*by-ay*bx, ax*bx+ay*by);
+    netTurn+=ang; absTurn+=Math.abs(ang);
+    if(Math.abs(ang)>CORNER_ANGLE){ corners++; var s=ang>0?1:-1;
+      if(lastSharp!==0 && s!==lastSharp) reversals++; lastSharp=s; }
+  }
+  return { pathLen:pathLen, endDist:endDist, straightness:straightness,
+    netTurn:netTurn, absTurn:absTurn, corners:corners, reversals:reversals };
+}
+/* 5.6 recognizeGlyph — feature-based, forgiving; order of checks matters (fixtures are the contract). */
+function recognizeGlyph(points){
+  if(!points || points.length<STROKE_MIN_PTS) return null;
+  var ns=normalizeStroke(points);
+  var f=strokeFeatures(ns.pts);
+  if(f.pathLen<STROKE_MIN_LEN) return null;                              // 1. fizzle
+  var closed=(f.endDist < 0.30*f.pathLen);
+  if(f.straightness>0.80 && f.corners<=1) return 'bolt';                 // 2. line / slash
+  if(closed){                                                            // 3. closed loop
+    if(f.corners>=2 && f.corners<=6 && Math.abs(f.netTurn)>3.5 && f.absTurn<12) return 'fireball';  // triangle
+    if(f.corners<=1 && Math.abs(f.netTurn)>4.5) return 'shield';         // smooth circle
+    return null;
+  }
+  if(f.corners>=1 && f.absTurn>=1.2 && f.absTurn<10 && f.straightness<0.80) return 'lightning';     // 4. V / zigzag
+  return null;                                                           // 5. scribble / fizzle
+}
+
+/* 5.7 isTpose — reused VERBATIM from game3d.html / sky-dash.html / pose-wall.html. */
+function isTpose(lm){ if(!lm) return false;
+  var vis=function(i){ return lm[i]&&(lm[i].visibility===undefined||lm[i].visibility>0.5); };
+  if(!(vis(11)&&vis(12)&&vis(15)&&vis(16))) return false;
+  var shY=(lm[11].y+lm[12].y)/2, shW=Math.abs(lm[11].x-lm[12].x)+1e-6, span=Math.abs(lm[15].x-lm[16].x);
+  if(span<shW*2.2) return false; var tol=shW*0.9;
+  return Math.abs(lm[15].y-shY)<tol && Math.abs(lm[16].y-shY)<tol; }
+
+/* 5.9 detectorFor — which detector the shared pump routes for a screen+frame (also copied into the smoke). */
+function detectorFor(screen, frame){
+  if(screen==='ready' || screen==='calib' || screen==='over') return 'pose';
+  if(screen==='play') return ((frame||0)%2===0)?'pose':'hands';
+  return null;
+}
+
+/* ================================ spell library (§6) ========================== */
+var SPELLS={
+  bolt:{ key:'bolt', glyph:'line', dmg:1, splash:0, chain:0, speed:34, color:0x5ee0ff, label:'⚡ Bolt' },
+  fireball:{ key:'fireball', glyph:'triangle', dmg:2, splash:1, chain:0, speed:18, color:0xff8a3c, label:'🔥 Fireball' },
+  shield:{ key:'shield', glyph:'circle', dmg:0, splash:0, chain:0, speed:0, color:0x3ef0a0, label:'🛡 Shield' },
+  lightning:{ key:'lightning', glyph:'zigzag', dmg:1, splash:0, chain:2, chainDmg:1, speed:40, color:0x7c5cff, label:'✦ Lightning' }
+};
+
+/* ================================ game state G (§9) =========================== */
+var G={
+  screen:'ready',          // 'ready' | 'calib' | 'play' | 'over'
+  control:'keyboard',      // 'keyboard' | 'camera'
+  running:false, outcome:null,   // 'win' | 'over' | null
+  best:0, score:0, newBest:false,
+  hp:100, maxHp:100,
+  wave:1, waves:WAVES, waveEnemiesLeft:0, breatherT:0,
+
+  mage:{ slot:0, x:0, ducking:false, duckT:0, duckCooldown:0 },
+  dodge:{ lean:0, slot:0 },
+  shield:false, shieldT:0,
+
+  enemies:[],      // { id, x, z, slot, hp, state:'drift'|'telegraph'|'dead', tele, t, seed }
+  eProj:[],        // enemy projectiles: { x, z, slot, high, dmg, dead }
+  spells:[],       // player projectiles (visual): { kind, x, z, targetId, tx, tz, dead, t }
+
+  calibration:{ center:0, standingY:0.42, done:false, t:0, n:0, sumC:0, sumY:0 },
+
+  stroke:{ armed:false, points:[], lastGlyph:null, flashT:0, fizzleT:0 },
+  activeHand:null,
+
+  cam:{ on:false, video:null, pose:null, hands:null, stream:null, sending:false,
+        frame:0, poseSeen:false, handsSeen:false, seen:false,
+        lm:null, handLm:null, leanRaw:0, shoulderY:0.42, tpose:false, tHold:0 },
+
+  keys:{ left:false, right:false, duck:false },
+  _eid:1, _last:0, _lastCastT:0, _scorePopT:0, _cw:640, _ch:480
+};
+
+/* ================================ tiny WebAudio sfx ============================ */
+var actx=null, muted=false;
+function audioOn(){ try{ if(!actx && (typeof window!=='undefined') && (window.AudioContext||window.webkitAudioContext))
+  actx=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){}
+  try{ if(actx&&actx.state==='suspended') actx.resume(); }catch(e){} }
+function blip(f,dur,type,v){ if(muted||!actx) return; try{ var t=actx.currentTime,o=actx.createOscillator(),g=actx.createGain();
+  o.type=type||'sine'; o.frequency.setValueAtTime(f,t); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(v||0.1,t+0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001,t+(dur||0.12)); o.connect(g).connect(actx.destination); o.start(t); o.stop(t+(dur||0.12)+0.02); }catch(e){} }
+function sfx(n){ if(n==='cast') blip(560,0.08,'triangle',0.06);
+  else if(n==='hit') blip(180,0.14,'sawtooth',0.10);
+  else if(n==='win'){ [523,659,784,1047].forEach(function(f,i){ setTimeout(function(){ blip(f,0.12,'triangle',0.08); },i*90); }); }
+  else if(n==='lose'){ blip(160,0.4,'sawtooth',0.14); setTimeout(function(){ blip(90,0.5,'sawtooth',0.12); },110); } }
+
+/* ================================ dom helpers ================================= */
+function show(id,on){ var e=$(id); if(e&&e.classList) e.classList.toggle('hidden',!on); }
+function camMsg(t){ var e=$('camMsg'); if(e) e.textContent=t||''; }
+function showCamPip(on){ var w=$('camWrap'); if(w&&w.classList) w.classList.toggle('hidden',!on); }
+function showScreen(name){
+  show('lobbyScreen', name==='ready');
+  show('calibScreen', name==='calib');
+  show('overScreen', name==='over');
+  show('hud', name==='play');
+  show('glyphLegend', name==='play');
+  if(name!=='play'){ var lc=$('lastCast'); if(lc&&lc.classList){ lc.classList.add('hidden'); lc.classList.remove('show'); } }
+  showCamPip(!!G.cam.on);
+}
+
+/* ================================ camera / detectors ========================== */
+function loadScript(src,timeout){ timeout=timeout||15000; return new Promise(function(res,rej){
+  var s=document.createElement('script'); s.src=src; s.crossOrigin='anonymous';
+  var to=setTimeout(function(){ rej(new Error('timeout')); },timeout);
+  s.onload=function(){ clearTimeout(to); res(); }; s.onerror=function(){ clearTimeout(to); rej(new Error('load failed')); };
+  document.head.appendChild(s); }); }
+
+/* the alternating dual-detector pump (§3.2): one send() in flight; Pose(even)/Hands(odd) during play. */
+function pumpCamera(){
+  var c=G.cam; if(!c.on || c.sending || G.control!=='camera') return;
+  var v=c.video; if(!v || v.readyState<2) return;
+  var which=detectorFor(G.screen, c.frame); c.frame++;
+  if(!which) return;
+  var det=(which==='hands')?c.hands:c.pose; if(!det) return;
+  c.sending=true;
+  try{ det.send({image:v}).catch(function(){}).finally(function(){ c.sending=false; }); }
+  catch(e){ c.sending=false; }
+}
+
+/* smoke-safe warm-up (§3.2): warm Pose then Hands; break the instant each is seen. */
+function warmUp(){ var c=G.cam; return (async function(){
+  var v=c.video;
+  for(var i=0;i<150 && !c.poseSeen;i++){
+    if(v && v.readyState>=2){ try{ await c.pose.send({image:v}); }catch(e){} }
+    if(c.poseSeen) break;
+    await new Promise(function(r){ requestAnimationFrame(r); });
+  }
+  for(var j=0;j<150 && !c.handsSeen;j++){
+    if(v && v.readyState>=2){ try{ await c.hands.send({image:v}); }catch(e){} }
+    if(c.handsSeen) break;
+    await new Promise(function(r){ requestAnimationFrame(r); });
+  }
+})(); }
+
+function teardownCamera(){ var c=G.cam; showCamPip(false); if(!c.on && !c.stream) return;
+  try{ if(c.stream) c.stream.getTracks().forEach(function(t){ t.stop(); }); }catch(e){}
+  c.stream=null;
+  try{ if(c.pose&&c.pose.close) c.pose.close(); }catch(e){}
+  try{ if(c.hands&&c.hands.close) c.hands.close(); }catch(e){}
+  c.pose=null; c.hands=null; if(c.video) c.video.srcObject=null;
+  c.on=false; c.seen=false; c.poseSeen=false; c.handsSeen=false; }
+
+var camBooting=false;
+async function startCameraFlow(){
+  if(camBooting) return; audioOn(); G.control='camera';
+  if(G.cam.on){ showCamPip(true); return; }
+  camBooting=true; camMsg('Starting camera…');
+  try{
+    if(typeof window.Pose==='undefined') await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js');
+    if(typeof window.Hands==='undefined') await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js');
+    if(typeof window.Pose==='undefined' || typeof window.Hands==='undefined') throw new Error('lib');
+    var stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false});
+    G.cam.stream=stream;
+    var v=G.cam.video; if(v){ v.srcObject=stream; try{ await v.play(); }catch(e){} }
+    var pose=new window.Pose({locateFile:function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/pose/'+f; }});
+    pose.setOptions({modelComplexity:0,smoothLandmarks:true,enableSegmentation:false,minDetectionConfidence:0.5,minTrackingConfidence:0.5});
+    pose.onResults(onPoseResults); G.cam.pose=pose;
+    var hands=new window.Hands({locateFile:function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/hands/'+f; }});
+    hands.setOptions({maxNumHands:1,modelComplexity:0,minDetectionConfidence:0.6,minTrackingConfidence:0.5});
+    hands.onResults(onHandsResults); G.cam.hands=hands;
+    await warmUp();
+    G.cam.on=true; showCamPip(true); camMsg('');
+  }catch(err){ camFallback(err); }
+  finally{ camBooting=false; }
+}
+function camFallback(err){
+  G.cam.on=false;
+  try{ if(G.cam.stream) G.cam.stream.getTracks().forEach(function(t){ t.stop(); }); }catch(e){}
+  G.cam.stream=null; if(G.cam.video) G.cam.video.srcObject=null; showCamPip(false);
+  var n=err&&err.name;
+  camMsg(n==='NotAllowedError' ? 'Camera blocked — allow it, or press ⌨ Keys.'
+       : n==='NotFoundError'  ? 'No camera found — press ⌨ Keys.'
+       :                        "Couldn't start camera — press ⌨ Keys.");
+  G.control='keyboard';
+}
+
+/* Pose callback — dodge lean/slot + duck during play; T-pose flag + calib samples otherwise. */
+function onPoseResults(res){
+  var cam=G.cam; cam.poseSeen=true;
+  var lm=res&&res.poseLandmarks; cam.lm=lm||null;
+  if(!lm){ cam.seen=false; return; }
+  cam.seen=true;
+  cam.tpose=isTpose(lm);
+  if(lm[11]&&lm[12]) cam.shoulderY=(lm[11].y+lm[12].y)/2;
+  cam.leanRaw=leanOffset(lm,0);
+  if(G.screen==='play'){
+    var l=leanOffset(lm, G.calibration.center);
+    G.dodge.lean=lerp(G.dodge.lean, l, LEAN_EMA);
+    G.mage.slot=pickDodge(G.dodge.lean, G.mage.slot);
+    G.dodge.slot=G.mage.slot;
+    if(isDuck(lm, G.calibration.standingY) && !G.mage.ducking && G.mage.duckCooldown<=0){
+      G.mage.ducking=true; G.mage.duckT=DUCK_TIME; G.mage.duckCooldown=DUCK_COOLDOWN;
+    }
+  }
+}
+
+/* Hands callback — arm the stroke on index-extended, recognize+cast on the falling edge (§7.2). */
+function onHandsResults(res){
+  var cam=G.cam; cam.handsSeen=true;
+  var hand=res && res.multiHandLandmarks && res.multiHandLandmarks[0];
+  cam.handLm=hand||null; G.activeHand=hand||null;
+  if(G.screen!=='play') return;
+  if(hand && isIndexExtended(hand)){
+    G.stroke.armed=true;
+    G.stroke.points.push({x:1-hand[8].x, y:hand[8].y});   // mirror the tip to selfie space
+    if(G.stroke.points.length>STROKE_MAX) G.stroke.points.shift();
+  } else if(G.stroke.armed){
+    var g=recognizeGlyph(G.stroke.points);
+    if(g){ G.stroke.flashT=FLASH_DUR; castSpell(g); }
+    else { G.stroke.fizzleT=FIZZLE_DUR; G.stroke.lastGlyph=null; showLastCast('fizzle'); }
+    G.stroke.points=[]; G.stroke.armed=false;
+  }
+}
+
+/* ================================ game flow (§8) ============================== */
+function liveEnemies(){ return G.enemies.filter(function(e){ return e.hp>0 && e.state!=='dead'; }); }
+function nearestEnemy(){ var live=liveEnemies(); if(!live.length) return null;
+  live.sort(function(a,b){ return a.z-b.z; }); return live[0]; }
+
+function spawnWave(w){
+  var count=2+w, i;
+  G.enemies=[];
+  for(i=0;i<count;i++){
+    var slot=[-1,0,1][i%3];
+    G.enemies.push({ id:G._eid++, slot:slot, x:slot*2, z:14+(i%5)*3+w, hp:ENEMY_HP,
+      state:'drift', tele:0, t:i*0.35, seed:Math.random() });
+  }
+  G.waveEnemiesLeft=count; G.breatherT=0.6;
+}
+
+function popScore(){ var sv=$('scoreV'); if(sv&&sv.classList){ sv.classList.remove('pop'); sv.classList.add('pop'); } G._scorePopT=0.34; }
+function damageEnemy(e,dmg){
+  if(!e || e.state==='dead') return;
+  e.hp-=dmg;
+  if(e.hp<=0){ e.hp=0; e.state='dead'; G.score+=KILL_POINTS; G.waveEnemiesLeft=Math.max(0,G.waveEnemiesLeft-1); popScore(); sfx('hit'); }
+}
+function checkWaveClear(){
+  if(G.screen!=='play') return;
+  if(liveEnemies().length>0) return;
+  if(G.wave>=G.waves){ winGame(); return; }
+  G.wave++; var wv=$('waveV'); if(wv&&wv.classList){ wv.classList.remove('up'); wv.classList.add('up'); }
+  spawnWave(G.wave); updateHud();
+}
+
+/* castSpell — single entry for the recognizer AND the keyboard (§8.3). Effects resolve synchronously
+   (deterministic); the pushed G.spells entry is a cosmetic projectile for the View. */
+function castSpell(kind){
+  if(G.screen!=='play') return;
+  var sp=SPELLS[kind]; if(!sp) return;
+  audioOn(); sfx('cast');
+  if(kind==='shield'){
+    G.shield=true; G.shieldT=SHIELD_TIME; G.stroke.lastGlyph='shield'; G.stroke.flashT=FLASH_DUR;
+    G.spells.push({ kind:'shield', x:G.mage.x, z:0, targetId:null, tx:G.mage.slot*2, tz:0, dead:false, t:0 });
+    showLastCast('shield'); return;
+  }
+  var target=nearestEnemy();
+  G.spells.push({ kind:kind, x:G.mage.x, z:0, targetId:target?target.id:null,
+    tx:target?target.x:G.mage.slot*2, tz:target?target.z:22, dead:false, t:0 });
+  G.stroke.lastGlyph=kind; G.stroke.flashT=FLASH_DUR;
+  if(target){
+    damageEnemy(target, sp.dmg);
+    if(kind==='fireball'){
+      var live=liveEnemies(), i;
+      for(i=0;i<live.length;i++){ var e=live[i]; if(e===target) continue;
+        if(Math.abs(e.slot-target.slot)<=1 && Math.abs(e.z-target.z)<=6) damageEnemy(e, sp.splash); }
+    }
+    if(kind==='lightning'){
+      var rest=liveEnemies().filter(function(e){ return e!==target; });
+      rest.sort(function(a,b){ return Math.abs(a.z-target.z)-Math.abs(b.z-target.z); });
+      for(var j=0;j<Math.min(sp.chain,rest.length);j++) damageEnemy(rest[j], sp.chainDmg);
+    }
+    checkWaveClear();
+  }
+  showLastCast(kind);
+}
+
+function winGame(){ G.outcome='win'; G.score+=WAVE_BONUS+Math.round(Math.max(0,G.hp)*WIN_HP_BONUS); endRound(); }
+function loseGame(){ G.outcome='over'; endRound(); }
+function endRound(){
+  G.running=false; G.screen='over';
+  G.newBest=(G.score>G.best); if(G.newBest) G.best=G.score;
+  try{ localStorage.setItem('spellcaster_best', String(G.best)); }catch(e){}   // best always persisted on game-over
+  showScreen('over'); updateOverUI();
+  sfx(G.outcome==='win'?'win':'lose');
+}
+
+function beginCalibration(){
+  G.calibration={ center:0, standingY:0.42, done:false, t:0, n:0, sumC:0, sumY:0 };
+  G.screen='calib'; showScreen('calib');
+}
+function stepCalib(dt){
+  var c=G.calibration; c.t+=dt;
+  if(G.cam.seen && G.cam.lm){ c.n++; c.sumC+=G.cam.leanRaw; c.sumY+=G.cam.shoulderY; }
+  if((c.t>=CALIB_TIME && c.n>0) || c.t>=CALIB_HARD){
+    if(c.n>0){ c.center=c.sumC/c.n; c.standingY=c.sumY/c.n; }
+    else { c.center=0; c.standingY=G.cam.shoulderY||0.42; }
+    c.done=true; startGame();
+  }
+}
+
+function startWithScheme(s){ audioOn(); G.control=s; if(s!=='camera' && G.cam.on) teardownCamera(); startGame(); }
+function startGame(){
+  G.screen='play'; G.running=true; G.outcome=null; G.newBest=false;
+  G.hp=MAX_HP; G.maxHp=MAX_HP; G.score=0; G.wave=1;
+  G.enemies=[]; G.eProj=[]; G.spells=[];
+  G.mage={ slot:0, x:0, ducking:false, duckT:0, duckCooldown:0 };
+  G.dodge={ lean:0, slot:0 };
+  G.shield=false; G.shieldT=0;
+  G.stroke={ armed:false, points:[], lastGlyph:null, flashT:0, fizzleT:0 };
+  G.activeHand=null; G.keys={ left:false, right:false, duck:false };
+  G._lastCastT=0;
+  spawnWave(1);
+  showScreen('play'); updateHud();
+}
+
+/* enemy AI: drift -> telegraph -> fire an enemy projectile down a lane slot. */
+function fireEnemy(e){
+  var high=Math.random()<0.4;
+  var slot=[-1,0,1][Math.floor(Math.random()*3)];
+  G.eProj.push({ x:slot*2, z:Math.max(6,e.z), slot:slot, high:high, dmg:HIT_DMG, dead:false });
+}
+function stepEnemies(dt){
+  if(G.breatherT>0){ G.breatherT-=dt; return; }
+  for(var i=0;i<G.enemies.length;i++){ var e=G.enemies[i]; if(e.state==='dead') continue;
+    e.t+=dt;
+    if(e.state==='drift'){ if(e.t>=DRIFT_TIME){ e.state='telegraph'; e.tele=0; e.t=0; } }
+    else if(e.state==='telegraph'){ e.tele+=dt; if(e.tele>=TELE_TIME){ fireEnemy(e); e.state='drift'; e.tele=0; e.t=0; } }
+  }
+}
+/* enemy projectiles travel to the mage plane; resolve hit/dodge/shield (§8.2). */
+function stepEProj(dt){
+  for(var i=G.eProj.length-1;i>=0;i--){ var p=G.eProj[i];
+    if(p.dead){ G.eProj.splice(i,1); continue; }
+    p.z-=EPROJ_SPEED*dt;
+    if(p.z<=0){
+      var wrongSlot=(p.slot!==G.mage.slot);
+      var duckedHigh=(p.high && G.mage.ducking);
+      var hit=!wrongSlot && !duckedHigh;
+      if(hit){
+        if(G.shield){ G.shield=false; G.shieldT=0; }     // shield blocks the next hit, then consumes
+        else { G.hp-=p.dmg; if(G.hp<0) G.hp=0; }
+      }
+      p.dead=true; G.eProj.splice(i,1);
+      if(G.hp<=0){ loseGame(); return; }
+    }
+  }
+}
+function stepSpells(dt){
+  for(var i=G.spells.length-1;i>=0;i--){ var s=G.spells[i]; s.t+=dt; if(s.t>0.6) G.spells.splice(i,1); }
+}
+
+function stepPlay(dt){
+  if(!G.running) return;
+  // mage lateral follow + duck / shield timers
+  G.mage.x=lerp(G.mage.x, G.mage.slot*2, clamp(dt*10,0,1));
+  if(G.mage.ducking){ G.mage.duckT-=dt; if(G.mage.duckT<=0) G.mage.ducking=false; }
+  if(G.mage.duckCooldown>0) G.mage.duckCooldown-=dt;
+  if(G.shieldT>0) G.shieldT-=dt;
+  // keyboard dodge / duck (camera drives these in onPoseResults)
+  if(G.control==='keyboard'){
+    G.mage.slot=(G.keys.right?1:0)-(G.keys.left?1:0);
+    if(G.keys.duck && !G.mage.ducking && G.mage.duckCooldown<=0){ G.mage.ducking=true; G.mage.duckT=DUCK_TIME; G.mage.duckCooldown=DUCK_COOLDOWN; }
+  }
+  stepEnemies(dt);
+  stepEProj(dt);
+  if(G.screen!=='play') return;   // stepEProj may have ended the round
+  stepSpells(dt);
+  if(G.stroke.flashT>0) G.stroke.flashT=Math.max(0,G.stroke.flashT-dt);
+  if(G.stroke.fizzleT>0) G.stroke.fizzleT=Math.max(0,G.stroke.fizzleT-dt);
+  if(G._lastCastT>0){ G._lastCastT-=dt; if(G._lastCastT<=0){ var lc=$('lastCast'); if(lc&&lc.classList) lc.classList.remove('show'); } }
+  if(G._scorePopT>0){ G._scorePopT-=dt; if(G._scorePopT<=0){ var sv=$('scoreV'); if(sv&&sv.classList) sv.classList.remove('pop'); } }
+}
+
+/* ================================ HUD text (Engine writes it — testable, §12) = */
+function showLastCast(kind){
+  var pill=$('lastCast'), txt=$('lastCastText'), dot=$('lastCastDot'); if(!pill) return;
+  var map={ bolt:['⚡ Bolt','#5ee0ff'], fireball:['🔥 Fireball','#ff8a3c'],
+    shield:['🛡 Shield','#3ef0a0'], lightning:['✦ Lightning','#7c5cff'], fizzle:['✕ Fizzle','#ff3b5c'] };
+  var m=map[kind]||map.fizzle;
+  if(txt) txt.textContent=m[0];
+  if(pill.style) pill.style.borderColor=m[1];
+  if(dot&&dot.style) dot.style.color=m[1];
+  if(pill.classList){ pill.classList.remove('hidden'); pill.classList.add('show'); }
+  G._lastCastT=LASTCAST_TIME;
+}
+function updateHud(){
+  var ratio=Math.max(0,G.hp/G.maxHp);
+  var col=ratio>0.5?'var(--good)':(ratio>0.25?'var(--warn)':'var(--bad)');
+  var bar=$('hpBar'); if(bar&&bar.style){ bar.style.width=(ratio*100)+'%'; bar.style.background=col; }
+  var hpv=$('hpV'); if(hpv){ hpv.textContent=String(Math.max(0,Math.round(G.hp))); if(hpv.style) hpv.style.color=col; }
+  var track=$('hpTrack'); if(track){ if(track.classList) track.classList.toggle('low', ratio<=0.25 && G.screen==='play');
+    if(track.setAttribute) track.setAttribute('aria-valuenow', String(Math.max(0,Math.round(G.hp)))); }
+  var wv=$('waveV'); if(wv) wv.textContent=G.wave+'/'+G.waves;
+  var sv=$('scoreV'); if(sv) sv.textContent=String(G.score);
+  var bv=$('bestV'); if(bv) bv.textContent=String(G.best);
+}
+function updateOverUI(){
+  var win=(G.outcome==='win');
+  var icon=$('overIcon'); if(icon) icon.textContent=win?'🏆':'💀';
+  var ta=$('overTitleA'); if(ta){ ta.textContent=win?'MAGE':'GAME'; if(ta.style) ta.style.color=win?'var(--good)':'var(--bad)'; }
+  var tb=$('overTitleB'); if(tb){ tb.textContent=win?'VICTORIOUS':'OVER'; if(tb.style) tb.style.color=win?'var(--lane)':'var(--warn)'; }
+  var mood=$('overMood'); if(mood){ mood.textContent=win?'🏆 All 5 waves cleared!':'💀 Defeated — your HP hit zero.'; if(mood.style) mood.style.color=win?'var(--good)':'var(--bad)'; }
+  var os=$('overScore'); if(os) os.textContent=String(G.score);
+  var ob=$('overBest'); if(ob) ob.textContent=String(G.best);
+  var ow=$('overWave'); if(ow) ow.textContent=G.wave+'/'+G.waves;
+  var nb=$('newBest'); if(nb&&nb.classList) nb.classList.toggle('hidden', !G.newBest);
+  var card=$('overCard'); if(card&&card.classList){ card.classList.toggle('win',win); card.classList.toggle('lose',!win); }
+}
+function updateLobbyReadout(){
+  var e=$('lobbyReadout'); if(!e) return;
+  if(!(G.control==='camera' && G.cam.on)){ if(e.classList) e.classList.add('hidden'); return; }
+  if(e.classList) e.classList.remove('hidden');
+  var body=G.cam.tpose ? ('T‑pose '+Math.min(100,Math.round((G.cam.tHold/GESTURE_HOLD)*100))+'%')
+    : (G.cam.seen?'tracking':'—');
+  var hand=G.cam.handLm ? 'tracking' : '—';
+  e.textContent='🧍 Body: '+body+'   ·   ✋ Hand: '+hand;
+}
+
+/* ================================ casting overlay 2D draw (§7/§12) ============ */
+function sizeCanvas(){
+  var cv=$('castCanvas'); if(!cv) return;
+  var dpr=Math.min((typeof window!=='undefined'&&window.devicePixelRatio)||1,2);
+  var w=(typeof window!=='undefined'&&window.innerWidth)||640, h=(typeof window!=='undefined'&&window.innerHeight)||480;
+  cv.width=Math.round(w*dpr); cv.height=Math.round(h*dpr);
+  if(cv.style){ cv.style.width=w+'px'; cv.style.height=h+'px'; }
+  var ctx=cv.getContext&&cv.getContext('2d'); if(ctx&&ctx.setTransform) ctx.setTransform(dpr,0,0,dpr,0,0);
+  G._cw=w; G._ch=h;
+}
+function drawCastOverlay(){
+  var cv=$('castCanvas'); if(!cv||!cv.getContext) return;
+  var ctx=cv.getContext('2d'); if(!ctx) return;
+  var W=G._cw||640, H=G._ch||480, reduce=prefersReduced(), coarse=isCoarse();
+  ctx.clearRect(0,0,W,H);
+  var pts=G.stroke.points, i;
+  // (a) live glyph stroke — glow then hot core
+  if(pts.length>1){
+    ctx.lineCap='round'; ctx.lineJoin='round';
+    ctx.shadowColor='rgba(94,224,255,0.85)'; ctx.shadowBlur=coarse?12:18;
+    ctx.strokeStyle='#5ee0ff'; ctx.lineWidth=coarse?4:5;
+    ctx.beginPath(); ctx.moveTo(pts[0].x*W, pts[0].y*H);
+    for(i=1;i<pts.length;i++) ctx.lineTo(pts[i].x*W, pts[i].y*H);
+    ctx.stroke();
+    ctx.shadowBlur=0; ctx.strokeStyle='rgba(255,255,255,0.65)'; ctx.lineWidth=coarse?1.5:2; ctx.stroke();
+  }
+  // (b) fingertip cursor
+  if(pts.length>0 && (G.stroke.armed || G.activeHand)){
+    var tip=pts[pts.length-1], tx=tip.x*W, ty=tip.y*H;
+    if(G.stroke.armed){
+      ctx.shadowColor='rgba(255,210,63,0.9)'; ctx.shadowBlur=14;
+      ctx.fillStyle='#ffd23f'; ctx.beginPath(); ctx.arc(tx,ty,7,0,7); ctx.fill(); ctx.shadowBlur=0;
+    }
+    ctx.strokeStyle='rgba(255,210,63,0.45)'; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(tx,ty,12,0,7); ctx.stroke();
+  }
+  // (c) confirm flash
+  if(G.stroke.flashT>0){
+    var a=clamp(G.stroke.flashT/FLASH_DUR,0,1);
+    var lp=pts.length?pts[pts.length-1]:{x:0.5,y:0.5}, cx=lp.x*W, cy=lp.y*H;
+    var r=reduce?42:lerp(18,64,1-a);
+    ctx.globalAlpha=a; ctx.shadowColor='rgba(62,240,160,0.9)'; ctx.shadowBlur=16;
+    ctx.strokeStyle='#3ef0a0'; ctx.lineWidth=4; ctx.beginPath(); ctx.arc(cx,cy,r,0,7); ctx.stroke();
+    ctx.fillStyle='#3ef0a0'; ctx.font='900 22px "Trebuchet MS",sans-serif'; ctx.textAlign='center';
+    ctx.fillText(String(G.stroke.lastGlyph||'').toUpperCase(), cx, cy-r-8);
+    ctx.globalAlpha=1; ctx.shadowBlur=0;
+  }
+  // (d) fizzle flash
+  if(G.stroke.fizzleT>0){
+    var af=clamp(G.stroke.fizzleT/FIZZLE_DUR,0,1);
+    var fp=pts.length?pts[pts.length-1]:{x:0.5,y:0.5}, fx=fp.x*W, fy=fp.y*H;
+    var dx=reduce?0:Math.sin(G.stroke.fizzleT*60)*3*af;
+    ctx.globalAlpha=af; ctx.fillStyle='#ff3b5c'; ctx.shadowColor='rgba(255,59,92,0.9)'; ctx.shadowBlur=14;
+    ctx.font='900 40px "Trebuchet MS",sans-serif'; ctx.textAlign='center';
+    ctx.fillText('?', fx+dx, fy); ctx.globalAlpha=1; ctx.shadowBlur=0;
+  }
+}
+
+/* ================================ RAF loop ==================================== */
+function update(ts){
+  if(ts==null) ts=(G._last||0)+16;
+  var dt=Math.min(0.05,(G._last?ts-G._last:16)/1000); G._last=ts; var t=ts/1000;
+  pumpCamera();
+  if((G.screen==='ready'||G.screen==='over') && G.control==='camera' && G.cam.on){
+    if(G.cam.tpose) G.cam.tHold+=dt; else G.cam.tHold=Math.max(0,G.cam.tHold-dt*2);
+    if(G.cam.tHold>=GESTURE_HOLD){ G.cam.tHold=0; if(G.screen==='ready') beginCalibration(); else startGame(); }
+  }
+  if(G.screen==='calib') stepCalib(dt);
+  if(G.screen==='play') stepPlay(dt);
+  updateLobbyReadout();
+  if(G.screen==='play'){ try{ drawCastOverlay(); }catch(e){} }
+  updateHud();
+  if(typeof window!=='undefined' && typeof window.__spellRender==='function'){ try{ window.__spellRender(dt,t); }catch(e){} }
+  if(typeof requestAnimationFrame!=='undefined') requestAnimationFrame(update);
+}
+
+/* ================================ keyboard (§7.3) ============================= */
+function wire(id,ev,fn){ var e=$(id); if(e&&e.addEventListener) e.addEventListener(ev,fn); }
+function initInput(){
+  if(typeof window==='undefined' || !window.addEventListener) return;
+  window.addEventListener('keydown',function(e){
+    if(document.activeElement && document.activeElement.tagName==='INPUT') return;
+    var k=e.key;
+    if(G.screen==='ready' && !camBooting){ if(k==='Enter'){ e.preventDefault(); startWithScheme('keyboard'); } return; }
+    if(G.screen==='over'){ if(k==='Enter'){ e.preventDefault(); startGame(); } return; }
+    if(G.screen!=='play') return;
+    if(k==='ArrowLeft'||k==='a'||k==='A'){ G.keys.left=true; G.mage.slot=-1; e.preventDefault(); }
+    else if(k==='ArrowRight'||k==='d'||k==='D'){ G.keys.right=true; G.mage.slot=1; e.preventDefault(); }
+    else if(k==='ArrowDown'||k==='s'||k==='S'){ G.keys.duck=true; e.preventDefault(); }
+    else if(k==='1'){ castSpell('bolt'); e.preventDefault(); }
+    else if(k==='2'){ castSpell('fireball'); e.preventDefault(); }
+    else if(k==='3'){ castSpell('shield'); e.preventDefault(); }
+    else if(k==='4'){ castSpell('lightning'); e.preventDefault(); }
+    else if(k===' '){ castSpell('bolt'); e.preventDefault(); }
+  });
+  window.addEventListener('keyup',function(e){ var k=e.key;
+    if(k==='ArrowLeft'||k==='a'||k==='A') G.keys.left=false;
+    else if(k==='ArrowRight'||k==='d'||k==='D') G.keys.right=false;
+    else if(k==='ArrowDown'||k==='s'||k==='S') G.keys.duck=false;
+  });
+  window.addEventListener('blur',function(){ G.keys={left:false,right:false,duck:false}; });
+}
+
+/* ================================ boot ======================================= */
+function initDom(){
+  G.cam.video=$('cam');
+  try{ G.best=parseInt((localStorage.getItem('spellcaster_best')||'0'),10)||0; }catch(e){ G.best=0; }
+  wire('playCamBtn','click',function(){ startCameraFlow(); });
+  wire('playKeysBtn','click',function(){ startWithScheme('keyboard'); });
+  wire('againBtn','click',function(){ startGame(); });
+  wire('howToBtn','click',function(){ var h=$('howto'); if(h&&h.classList) h.classList.toggle('hidden'); });
+  initInput();
+  sizeCanvas();
+  if(typeof window!=='undefined' && window.addEventListener) window.addEventListener('resize', function(){ sizeCanvas(); });
+  showScreen('ready'); updateHud();
+}
+initDom();
+if(typeof requestAnimationFrame!=='undefined') requestAnimationFrame(update);
+
+/* ============================ test exposer (SPEC §3.4) ======================= */
+;try{ globalThis.__spell = { G:G, update:update, startGame:startGame,
+  onPoseResults:onPoseResults, onHandsResults:onHandsResults,
+  leanOffset:leanOffset, pickDodge:pickDodge, isDuck:isDuck,
+  isIndexExtended:isIndexExtended, isPinch:isPinch, recognizeGlyph:recognizeGlyph,
+  isTpose:isTpose, detectorFor:detectorFor, castSpell:castSpell,
+  startWithScheme:startWithScheme, SPELLS:SPELLS }; }catch(e){}
+</script>
+</body>
+</html>
