@@ -167,7 +167,8 @@
 <div id="hud" class="hidden">
   <div id="hpWrap"><div class="k"><span>HP</span><b id="hpV">100</b></div><div id="hpTrack" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100"><div id="hpBar"></div></div></div>
   <div class="mini">
-    <div class="stat"><div class="k">Wave</div><div class="v" id="waveV" aria-live="polite">1/5</div></div>
+    <div class="stat" id="waveStat"><div class="k">Wave</div><div class="v" id="waveV" aria-live="polite">1/5</div></div>
+    <div class="stat hidden" id="oppStat"><div class="k">Opponent</div><div class="v" id="oppHpV" style="color:var(--bad)" aria-live="polite">100</div></div>
     <div class="stat"><div class="k">Score</div><div class="v" id="scoreV" aria-live="polite">0</div></div>
     <div class="stat"><div class="k">Best</div><div class="v" id="bestV">0</div></div>
   </div>
@@ -193,6 +194,19 @@
     <div class="ctarow"><button class="btn ghost" id="playKeysBtn">&#9000; Keys</button></div>
     <div id="camMsg" class="sub" style="text-align:center;color:var(--warn);min-height:1px;margin:10px 0 0"></div>
     <div id="lobbyReadout" class="sub" style="margin:8px 0 0;color:var(--lane)" aria-live="polite">&#129485; Body: &mdash;   &middot;   &#9995; Hand: &mdash;</div>
+
+    <!-- live 1v1 duel: room-code WebRTC P2P (api/signal.js signaling) -->
+    <div id="duelBox" style="margin-top:14px;border-top:1px solid rgba(255,255,255,0.12);padding-top:12px">
+      <div class="sub" style="margin:0 0 8px;font-weight:900;color:var(--arcane)">&#9876; Duel a friend &middot; 2 PCs, live</div>
+      <div class="ctarow">
+        <button class="btn ghost" id="createRoomBtn" style="font-size:14px">Create room</button>
+        <button class="btn ghost" id="joinRoomBtn" style="font-size:14px">Join</button>
+      </div>
+      <input id="roomInput" autocomplete="off" maxlength="8" placeholder="Room code (e.g. ABCD)"
+        style="width:100%;margin-top:8px;padding:11px 12px;border-radius:12px;border:2px solid rgba(94,224,255,0.35);background:rgba(5,7,15,0.6);color:var(--ink);font-weight:900;font-size:16px;text-align:center;letter-spacing:3px;text-transform:uppercase" />
+      <div id="netStatus" class="sub" style="margin:8px 0 0;color:var(--lane);min-height:1.2em" aria-live="polite"></div>
+    </div>
+
     <div class="ctarow"><button class="btn ghost" id="tutorialBtn" style="font-size:14px">&#128218; Tutorial</button></div>
     <button class="linkbtn" id="howToBtn">How to cast</button>
     <div id="howto" class="hidden">
@@ -370,6 +384,16 @@ try{
   scene.add(mage);
   let mageDip = 0;
 
+  /* opponent mage (duel mode only): a foe-tinted mage standing downrange, facing the player. */
+  const foe = buildMage();
+  foe.traverse(function(o){ if(o.isMesh && o.material && o.material.emissive){
+    if(o.material.color && (o.material.color.getHex()===COL.mageHood)) o.material.color.setHex(COL.enemyRim);
+    o.material.emissive.setHex(COL.enemyRim); } });
+  foe.rotation.y = Math.PI;            // face back toward the player
+  foe.position.set(0, 0, -20);
+  foe.visible = false; scene.add(foe);
+  let foeDip = 0;
+
   /* ---- pools (fixed size → no per-frame allocation; mobile-light) ---- */
   function buildEnemy(){
     const g = new THREE.Group();
@@ -488,6 +512,16 @@ try{
         m.scale.setScalar(base * (reduceMotion ? 1 : (1 + Math.sin(t*30 + i)*0.1)));
       }
 
+      // OPPONENT mage (duel): interpolate to the peer's last-known position; face the player
+      if(G.mode==='duel' && G.net && G.net.connected){
+        foe.visible = true;
+        const op = G.net.opp || { x:0, ducking:false };
+        foe.position.x += ((op.x||0) - foe.position.x) * Math.min(1, dt*8);
+        const fTarget = op.ducking ? -0.55 : 0;
+        foeDip += (fTarget - foeDip) * Math.min(1, dt*12);
+        foe.position.y = foeDip; foe.scale.set(1, 1 + foeDip*0.28, 1);
+      } else foe.visible = false;
+
       // SHIELD hemisphere in front of the mage while G.shield
       if(G.shield){
         shield.visible = true;
@@ -553,6 +587,15 @@ var DUCK_TIME=0.6, DUCK_COOLDOWN=0.35;
 var DRIFT_TIME=1.4, TELE_TIME=1.2, EPROJ_SPEED=6, SHIELD_TIME=6;
 var CALIB_TIME=1.0, CALIB_HARD=3.0;
 var FLASH_DUR=0.45, FIZZLE_DUR=0.4, STROKE_MAX=128, LASTCAST_TIME=1.2;
+
+/* -------------------------------- duel / netcode constants (live 1v1) ------------------------ */
+var DUEL_DMG={ bolt:16, fireball:30, lightning:22 };   // damage each spell deals to the opponent
+var DUEL_WIN_BONUS=1000;                                // score for winning a duel
+var POS_INTERVAL=0.066;                                 // ~15 Hz position broadcast
+var ICE_SERVERS=[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}];
+/* Optional TURN relay for strict/symmetric NATs — set these (or leave blank for STUN-only).
+   Most home networks connect on STUN alone; without TURN a small % of networks won't connect. */
+var TURN_URL='', TURN_USER='', TURN_CRED='';
 
 /* ===================== PURE FUNCTIONS — mirrored VERBATIM into tests/spell-caster.logic.test.js =====================
    Every function below is f(landmarks/points)->number|bool|string: no DOM, no G, no globals besides the
@@ -692,7 +735,8 @@ var SPELLS={
 
 /* ================================ game state G (§9) =========================== */
 var G={
-  screen:'ready',          // 'ready' | 'calib' | 'play' | 'over'
+  screen:'ready',          // 'ready' | 'tutorial' | 'calib' | 'play' | 'over'
+  mode:'practice',         // 'practice' (solo vs AI waves) | 'duel' (live 1v1 over WebRTC)
   control:'keyboard',      // 'keyboard' | 'camera'
   running:false, outcome:null,   // 'win' | 'over' | null
   best:0, score:0, newBest:false,
@@ -718,6 +762,12 @@ var G={
 
   keys:{ left:false, right:false, duck:false },
   tutorial:{ active:false, idx:0, mode:null, calT:0, drew:false, holdT:0 },
+
+  // live-duel networking (WebRTC P2P; see the "netcode" block). opp = remote mage for the View.
+  net:{ role:null, room:'', state:'idle', connected:false, error:'',
+        meReady:false, oppReady:false, oppHp:MAX_HP, opp:{ x:0, slot:0, ducking:false },
+        pc:null, dc:null, _posT:0, _lastSentHp:MAX_HP },
+
   _eid:1, _last:0, _lastCastT:0, _scorePopT:0, _cw:640, _ch:480
 };
 
@@ -904,6 +954,7 @@ function castSpell(kind){
   if(G.screen!=='play') return;
   var sp=SPELLS[kind]; if(!sp) return;
   audioOn(); sfx('cast');
+  if(G.mode==='duel'){ castSpellDuel(kind, sp); return; }   // duel: send to opponent, no local AI targets
   if(kind==='shield'){
     G.shield=true; G.shieldT=SHIELD_TIME; G.stroke.lastGlyph='shield'; G.stroke.flashT=FLASH_DUR;
     G.spells.push({ kind:'shield', x:G.mage.x, z:0, targetId:null, tx:G.mage.slot*2, tz:0, dead:false, t:0 });
@@ -930,8 +981,12 @@ function castSpell(kind){
   showLastCast(kind);
 }
 
-function winGame(){ G.outcome='win'; G.score+=WAVE_BONUS+Math.round(Math.max(0,G.hp)*WIN_HP_BONUS); endRound(); }
-function loseGame(){ G.outcome='over'; endRound(); }
+function winGame(){ if(G.screen!=='play') return; G.outcome='win';
+  G.score += (G.mode==='duel') ? DUEL_WIN_BONUS : (WAVE_BONUS+Math.round(Math.max(0,G.hp)*WIN_HP_BONUS));
+  endRound(); }
+function loseGame(){ if(G.screen!=='play') return; G.outcome='over';
+  if(G.mode==='duel') netSend({t:'end', l:1});   // tell the opponent they won
+  endRound(); }
 function endRound(){
   G.running=false; G.screen='over';
   G.newBest=(G.score>G.best); if(G.newBest) G.best=G.score;
@@ -956,6 +1011,7 @@ function stepCalib(dt){
 
 function startWithScheme(s){ audioOn(); G.control=s; if(s!=='camera' && G.cam.on) teardownCamera(); startGame(); }
 function startGame(){
+  G.mode='practice';
   G.screen='play'; G.running=true; G.outcome=null; G.newBest=false;
   G.hp=MAX_HP; G.maxHp=MAX_HP; G.score=0; G.wave=1;
   G.enemies=[]; G.eProj=[]; G.spells=[];
@@ -1050,6 +1106,146 @@ function renderTutorial(){
   setTutStatus('');
 }
 
+/* ================================ netcode — live 1v1 duel (WebRTC P2P) ====================
+   Authority model: each client owns its OWN mage position + its OWN HP (no lag disputes — you
+   always control your own dodge). Messages (tiny JSON over one RTCDataChannel):
+     pos {x,s,d}  · cast {k,slot,high}  · hp {v}  · ready · start · end {l} · bye
+   netApply() applies a received message; netSend() ships one; both are pure of the DOM and are
+   unit-tested via a loopback fake channel (tests/spell-caster.net.test.js). Camera frames are
+   NEVER sent — only these state messages cross the wire. */
+function netSend(msg){ var n=G.net; try{ if(n.dc && n.dc.readyState==='open') n.dc.send(JSON.stringify(msg)); }catch(e){} }
+function netDmg(kind){ return DUEL_DMG[kind]||16; }
+function netSpawnIncoming(msg){
+  if(G.screen!=='play' || G.mode!=='duel') return;
+  var k=msg.k||'bolt'; if(k==='shield') return;                     // shield is defensive, never an attack
+  var slot=(msg.slot===1||msg.slot===-1)?msg.slot:0;
+  G.eProj.push({ x:slot*2, z:14, slot:slot, high:!!msg.high, dmg:netDmg(k), dead:false, kind:k });
+}
+function netApply(msg){
+  if(!msg || !msg.t) return; var n=G.net;
+  if(msg.t==='pos'){ n.opp.x=+msg.x||0; n.opp.slot=msg.s||0; n.opp.ducking=!!msg.d; }
+  else if(msg.t==='cast'){ netSpawnIncoming(msg); }
+  else if(msg.t==='hp'){ n.oppHp=clamp(+msg.v||0,0,MAX_HP); updateHud(); if(n.oppHp<=0) winGame(); }
+  else if(msg.t==='ready'){ n.oppReady=true; netStatus(); maybeStartDuel(); }
+  else if(msg.t==='start'){ if(G.screen!=='play') beginDuelMatch(); }
+  else if(msg.t==='end'){ winGame(); }                              // opponent defeated -> I win
+  else if(msg.t==='bye'){ n.error='Opponent left.'; n.connected=false; netStatus(); if(G.screen==='play') winGame(); }
+}
+
+/* start the synchronized duel once both sides are connected + ready. */
+function beginDuelMatch(){
+  if(G.screen==='play') return;
+  G.mode='duel'; G.screen='play'; G.running=true; G.outcome=null; G.newBest=false;
+  G.hp=MAX_HP; G.maxHp=MAX_HP; G.score=0; G.wave=1; G.waves=WAVES;
+  G.enemies=[]; G.eProj=[]; G.spells=[];
+  G.mage={ slot:0, x:0, ducking:false, duckT:0, duckCooldown:0 };
+  G.dodge={ lean:0, slot:0 };
+  G.shield=false; G.shieldT=0;
+  G.stroke={ armed:false, points:[], lastGlyph:null, flashT:0, fizzleT:0 };
+  G.activeHand=null; G.keys={ left:false, right:false, duck:false };
+  G.net.oppHp=MAX_HP; G.net._lastSentHp=MAX_HP; G.net._posT=0;
+  showScreen('play'); updateHud();
+}
+function maybeStartDuel(){ var n=G.net;
+  if(n.connected && n.meReady && n.oppReady && G.screen!=='play'){ netSend({t:'start'}); beginDuelMatch(); } }
+function duelReady(){ var n=G.net; if(!n.connected) return;
+  n.meReady=true; netSend({t:'ready'}); netStatus(); maybeStartDuel(); }
+/* the lobby "start" gesture routes here: in a live duel it readies you; otherwise practice. */
+function lobbyStart(mode){
+  if(G.net.connected && G.mode==='duel'){
+    if(mode==='keyboard'){ G.control='keyboard'; if(G.cam.on) teardownCamera(); } else G.control='camera';
+    duelReady(); return;
+  }
+  requestStart(mode);
+}
+/* duel cast: send it to the opponent (who spawns an incoming to dodge) + show my bolt flying downrange. */
+function castSpellDuel(kind, sp){
+  if(kind==='shield'){
+    G.shield=true; G.shieldT=SHIELD_TIME; G.stroke.lastGlyph='shield'; G.stroke.flashT=FLASH_DUR;
+    G.spells.push({ kind:'shield', x:G.mage.x, z:0, targetId:null, tx:G.mage.slot*2, tz:0, dead:false, t:0 });
+    showLastCast('shield'); return;
+  }
+  var slot=[-1,0,1][Math.floor(Math.random()*3)], high=Math.random()<0.4;
+  G.spells.push({ kind:kind, x:G.mage.x, z:0, targetId:null, tx:slot*2, tz:22, dead:false, t:0 });
+  G.stroke.lastGlyph=kind; G.stroke.flashT=FLASH_DUR;
+  netSend({ t:'cast', k:kind, slot:slot, high:high });
+  showLastCast(kind);
+}
+function stepDuel(dt){
+  var n=G.net; n._posT-=dt;
+  if(n._posT<=0){ n._posT=POS_INTERVAL; netSend({ t:'pos', x:G.mage.x, s:G.mage.slot, d:G.mage.ducking?1:0 }); }
+}
+
+/* ---- WebRTC connection (non-trickle: gather all ICE, then exchange ONE blob via /api/signal) ---- */
+function rtcConfig(){ var ice=ICE_SERVERS.slice();
+  if(TURN_URL) ice.push({ urls:TURN_URL, username:TURN_USER, credential:TURN_CRED }); return { iceServers:ice }; }
+function makeRoomCode(){ var s='ABCDEFGHJKLMNPQRSTUVWXYZ23456789', r=''; for(var i=0;i<4;i++) r+=s.charAt(Math.floor(Math.random()*s.length)); return r; }
+function signalPost(room, role, sdp){ return fetch('/api/signal',{ method:'POST', headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({ room:room, role:role, sdp:{ type:sdp.type, sdp:sdp.sdp } }) }).then(function(r){ return r.json(); }); }
+function signalGet(room, role){ return fetch('/api/signal?room='+encodeURIComponent(room)+'&role='+role).then(function(r){ return r.json(); }); }
+function waitIce(pc){ return new Promise(function(res){
+  if(pc.iceGatheringState==='complete') return res();
+  var done=false; function fin(){ if(done) return; done=true; try{ pc.removeEventListener('icegatheringstatechange',chk); }catch(e){} res(); }
+  function chk(){ if(pc.iceGatheringState==='complete') fin(); }
+  pc.addEventListener('icegatheringstatechange',chk); setTimeout(fin,4000); }); }
+function attachDc(dc){
+  dc.onopen=function(){ G.net.connected=true; G.net.state='connected'; netStatus(); };
+  dc.onmessage=function(ev){ try{ netApply(JSON.parse(ev.data)); }catch(e){} };
+  dc.onclose=function(){ G.net.connected=false; if(!G.net.error) G.net.error='Disconnected.'; netStatus(); };
+  G.net.dc=dc;
+}
+function pollSignal(room, role, cb){                        // poll until the other side's blob appears
+  var tries=0; (function loop(){ if(tries++>90){ G.net.error='Timed out waiting for opponent.'; netStatus(); return; }
+    signalGet(room, role).then(function(j){
+      if(j && j.sdp){ cb(j.sdp); return; }
+      setTimeout(loop, 1200);
+    }).catch(function(){ setTimeout(loop, 1500); }); })();
+}
+async function createRoom(){
+  if(typeof RTCPeerConnection==='undefined' || typeof fetch==='undefined'){ G.net.error='Live duel needs a modern browser + HTTPS.'; netStatus(); return; }
+  audioOn(); var code=makeRoomCode();
+  G.net.role='host'; G.net.room=code; G.net.state='creating'; G.net.error=''; G.mode='duel'; netStatus();
+  try{
+    var pc=new RTCPeerConnection(rtcConfig()); G.net.pc=pc;
+    pc.oniceconnectionstatechange=function(){ if(pc.iceConnectionState==='failed'){ G.net.error='Connection failed — try again (or a TURN server).'; netStatus(); } };
+    attachDc(pc.createDataChannel('spell'));                // host owns the channel
+    var offer=await pc.createOffer(); await pc.setLocalDescription(offer); await waitIce(pc);
+    var pr=await signalPost(code,'host',pc.localDescription);
+    if(pr && pr.ok===false){ G.net.error=pr.error||'Signaling unavailable.'; netStatus(); return; }
+    G.net.state='waiting'; netStatus();
+    pollSignal(code,'guest',function(ans){ try{ pc.setRemoteDescription(ans); }catch(e){ G.net.error='Bad answer from opponent.'; netStatus(); } });
+  }catch(e){ G.net.error='Could not create room.'; netStatus(); }
+}
+async function joinRoom(code){
+  if(typeof RTCPeerConnection==='undefined' || typeof fetch==='undefined'){ G.net.error='Live duel needs a modern browser + HTTPS.'; netStatus(); return; }
+  code=(code||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  if(code.length<4){ G.net.error='Enter the room code your friend shared.'; netStatus(); return; }
+  audioOn(); G.net.role='guest'; G.net.room=code; G.net.state='joining'; G.net.error=''; G.mode='duel'; netStatus();
+  try{
+    var pc=new RTCPeerConnection(rtcConfig()); G.net.pc=pc;
+    pc.oniceconnectionstatechange=function(){ if(pc.iceConnectionState==='failed'){ G.net.error='Connection failed — try again (or a TURN server).'; netStatus(); } };
+    pc.ondatachannel=function(ev){ attachDc(ev.channel); };  // guest receives the host's channel
+    var got=await signalGet(code,'host');
+    if(!got || !got.sdp){ G.net.error='Room not found — check the code.'; netStatus(); return; }
+    await pc.setRemoteDescription(got.sdp);
+    var answer=await pc.createAnswer(); await pc.setLocalDescription(answer); await waitIce(pc);
+    var pr=await signalPost(code,'guest',pc.localDescription);
+    if(pr && pr.ok===false){ G.net.error=pr.error||'Signaling unavailable.'; netStatus(); return; }
+    G.net.state='connecting'; netStatus();
+  }catch(e){ G.net.error='Could not join room.'; netStatus(); }
+}
+function netStatus(){
+  var e=$('netStatus'); if(!e) return; var n=G.net; var t='';
+  if(n.error) t=n.error;
+  else if(n.state==='waiting'||n.state==='creating') t='Room '+n.room+' — share this code, waiting for a friend…';
+  else if(n.state==='joining'||n.state==='connecting') t='Joining '+n.room+'…';
+  else if(n.connected && !n.meReady) t='Connected to '+n.room+'! Strike a T‑pose or press Keys to ready up.';
+  else if(n.connected && n.meReady && !n.oppReady) t='Ready ✓ — waiting for opponent to ready up…';
+  else if(n.connected && n.meReady && n.oppReady) t='Both ready — duel starting!';
+  e.textContent=t;
+  var ri=$('roomInput'); if(ri && ri.style) ri.style.display=(n.connected||n.state==='waiting')?'none':'';
+}
+
 /* enemy AI: drift -> telegraph -> fire an enemy projectile down a lane slot. */
 function fireEnemy(e){
   var high=Math.random()<0.4;
@@ -1098,8 +1294,9 @@ function stepPlay(dt){
     G.mage.slot=(G.keys.right?1:0)-(G.keys.left?1:0);
     if(G.keys.duck && !G.mage.ducking && G.mage.duckCooldown<=0){ G.mage.ducking=true; G.mage.duckT=DUCK_TIME; G.mage.duckCooldown=DUCK_COOLDOWN; }
   }
-  stepEnemies(dt);
+  if(G.mode==='duel') stepDuel(dt); else stepEnemies(dt);   // duel: incoming come from the peer, not AI
   stepEProj(dt);
+  if(G.mode==='duel' && G.hp!==G.net._lastSentHp){ G.net._lastSentHp=G.hp; netSend({ t:'hp', v:G.hp }); }
   if(G.screen!=='play') return;   // stepEProj may have ended the round
   stepSpells(dt);
   if(G.stroke.flashT>0) G.stroke.flashT=Math.max(0,G.stroke.flashT-dt);
@@ -1127,16 +1324,20 @@ function updateHud(){
   var hpv=$('hpV'); if(hpv){ hpv.textContent=String(Math.max(0,Math.round(G.hp))); if(hpv.style) hpv.style.color=col; }
   var track=$('hpTrack'); if(track){ if(track.classList) track.classList.toggle('low', ratio<=0.25 && G.screen==='play');
     if(track.setAttribute) track.setAttribute('aria-valuenow', String(Math.max(0,Math.round(G.hp)))); }
+  var duel=(G.mode==='duel');
+  show('waveStat', !duel); show('oppStat', duel);
   var wv=$('waveV'); if(wv) wv.textContent=G.wave+'/'+G.waves;
+  var ohv=$('oppHpV'); if(ohv) ohv.textContent=String(Math.max(0,Math.round(G.net.oppHp)));
   var sv=$('scoreV'); if(sv) sv.textContent=String(G.score);
   var bv=$('bestV'); if(bv) bv.textContent=String(G.best);
 }
 function updateOverUI(){
-  var win=(G.outcome==='win');
+  var win=(G.outcome==='win'), duel=(G.mode==='duel');
   var icon=$('overIcon'); if(icon) icon.textContent=win?'🏆':'💀';
-  var ta=$('overTitleA'); if(ta){ ta.textContent=win?'MAGE':'GAME'; if(ta.style) ta.style.color=win?'var(--good)':'var(--bad)'; }
-  var tb=$('overTitleB'); if(tb){ tb.textContent=win?'VICTORIOUS':'OVER'; if(tb.style) tb.style.color=win?'var(--lane)':'var(--warn)'; }
-  var mood=$('overMood'); if(mood){ mood.textContent=win?'🏆 All 5 waves cleared!':'💀 Defeated — your HP hit zero.'; if(mood.style) mood.style.color=win?'var(--good)':'var(--bad)'; }
+  var ta=$('overTitleA'); if(ta){ ta.textContent=duel?'DUEL':(win?'MAGE':'GAME'); if(ta.style) ta.style.color=win?'var(--good)':'var(--bad)'; }
+  var tb=$('overTitleB'); if(tb){ tb.textContent=duel?(win?'WON':'LOST'):(win?'VICTORIOUS':'OVER'); if(tb.style) tb.style.color=win?'var(--lane)':'var(--warn)'; }
+  var mood=$('overMood'); if(mood){ mood.textContent=duel?(win?'🏆 You defeated your opponent!':'💀 Your opponent won this duel.')
+    :(win?'🏆 All 5 waves cleared!':'💀 Defeated — your HP hit zero.'); if(mood.style) mood.style.color=win?'var(--good)':'var(--bad)'; }
   var os=$('overScore'); if(os) os.textContent=String(G.score);
   var ob=$('overBest'); if(ob) ob.textContent=String(G.best);
   var ow=$('overWave'); if(ow) ow.textContent=G.wave+'/'+G.waves;
@@ -1217,7 +1418,7 @@ function update(ts){
   pumpCamera();
   if((G.screen==='ready'||G.screen==='over') && G.control==='camera' && G.cam.on){
     if(G.cam.tpose) G.cam.tHold+=dt; else G.cam.tHold=Math.max(0,G.cam.tHold-dt*2);
-    if(G.cam.tHold>=GESTURE_HOLD){ G.cam.tHold=0; if(G.screen==='ready') requestStart('camera'); else startGame(); }
+    if(G.cam.tHold>=GESTURE_HOLD){ G.cam.tHold=0; if(G.screen==='ready') lobbyStart('camera'); else startGame(); }
   }
   if(G.screen==='tutorial') stepTutorial(dt);
   if(G.screen==='calib') stepCalib(dt);
@@ -1238,7 +1439,7 @@ function initInput(){
     var k=e.key;
     if(G.screen==='tutorial'){ if(k==='Enter'){ e.preventDefault(); advTutorial(); }
       else if(k==='Escape'||k==='s'||k==='S'){ e.preventDefault(); skipTutorial(); } return; }
-    if(G.screen==='ready' && !camBooting){ if(k==='Enter'){ e.preventDefault(); requestStart('keyboard'); } return; }
+    if(G.screen==='ready' && !camBooting){ if(k==='Enter'){ e.preventDefault(); lobbyStart('keyboard'); } return; }
     if(G.screen==='over'){ if(k==='Enter'){ e.preventDefault(); startGame(); } return; }
     if(G.screen!=='play') return;
     if(k==='ArrowLeft'||k==='a'||k==='A'){ G.keys.left=true; G.mage.slot=-1; e.preventDefault(); }
@@ -1263,12 +1464,14 @@ function initDom(){
   G.cam.video=$('cam');
   try{ G.best=parseInt((localStorage.getItem('spellcaster_best')||'0'),10)||0; }catch(e){ G.best=0; }
   wire('playCamBtn','click',function(){ startCameraFlow(); });
-  wire('playKeysBtn','click',function(){ requestStart('keyboard'); });
+  wire('playKeysBtn','click',function(){ lobbyStart('keyboard'); });
   wire('againBtn','click',function(){ startGame(); });
   wire('howToBtn','click',function(){ var h=$('howto'); if(h&&h.classList) h.classList.toggle('hidden'); });
   wire('tutorialBtn','click',function(){ openTutorial(null); });
   wire('tutSkip','click',function(){ skipTutorial(); });
   wire('tutNext','click',function(){ advTutorial(); });
+  wire('createRoomBtn','click',function(){ createRoom(); });
+  wire('joinRoomBtn','click',function(){ var ri=$('roomInput'); joinRoom(ri?ri.value:''); });
   initInput();
   sizeCanvas();
   if(typeof window!=='undefined' && window.addEventListener) window.addEventListener('resize', function(){ sizeCanvas(); });
@@ -1286,7 +1489,10 @@ if(typeof requestAnimationFrame!=='undefined') requestAnimationFrame(update);
   startWithScheme:startWithScheme, SPELLS:SPELLS,
   openTutorial:openTutorial, advTutorial:advTutorial, skipTutorial:skipTutorial,
   finishTutorial:finishTutorial, needsTutorial:needsTutorial, requestStart:requestStart,
-  curTutStep:curTutStep, TUT_STEPS:TUT_STEPS }; }catch(e){}
+  curTutStep:curTutStep, TUT_STEPS:TUT_STEPS,
+  netApply:netApply, netSend:netSend, netDmg:netDmg, beginDuelMatch:beginDuelMatch,
+  duelReady:duelReady, maybeStartDuel:maybeStartDuel, lobbyStart:lobbyStart,
+  createRoom:createRoom, joinRoom:joinRoom }; }catch(e){}
 </script>
 </body>
 </html>
