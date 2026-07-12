@@ -3,19 +3,23 @@
 //   POST /api/chat  { messages:[{role:'user'|'assistant', content}], page?:{url,title,context} }
 //        -> { ok:true, reply:"..." }
 //
-// Calls the xAI Grok API SERVER-SIDE with process.env.XAI_API_KEY, so the key is NEVER exposed to
-// visitors (same pattern as api/scores.js with DATABASE_URL). The bot knows the whole arcade via the
-// SYSTEM_PROMPT below, so it answers "how do I play Sky Dash?" instantly.
+// Calls an OpenAI-compatible LLM API SERVER-SIDE (default: Groq — free tier, very fast), so the key
+// is NEVER exposed to visitors (same pattern as api/scores.js with DATABASE_URL). The bot knows the
+// whole arcade via the SYSTEM_PROMPT below, so it answers "how do I play Sky Dash?" instantly.
+//
+// Provider is env-configurable (all OpenAI chat/completions compatible):
+//  * Key:   GROQ_API_KEY  (also reads XAI_API_KEY / LLM_API_KEY for back-compat)
+//  * URL:   LLM_API_URL   (default https://api.groq.com/openai/v1/chat/completions)
+//  * Model: LLM_MODEL     (default llama-3.3-70b-versatile — a strong free Groq model)
+//    To use xAI Grok instead: LLM_API_URL=https://api.x.ai/v1/chat/completions, LLM_MODEL=grok-4.5.
 //
 // Safety / cost:
 //  * No key -> 503 {configured:false} so the client cleanly hides AI and the mascot still roams.
-//  * Best-effort in-memory per-IP rate limit (serverless is multi-instance, so this is a soft cap,
-//    not a hard guarantee — for hard limits put a KV/Postgres counter here later).
-//  * Message + history + context are length-capped to bound token cost.
+//  * Best-effort in-memory per-IP rate limit; message/history/context length-capped.
 
-const XAI_API_KEY = process.env.XAI_API_KEY || process.env.GROK_API_KEY || '';
-const XAI_URL = 'https://api.x.ai/v1/chat/completions';
-const MODEL = process.env.XAI_MODEL || 'grok-4.5';
+const API_KEY = process.env.GROQ_API_KEY || process.env.XAI_API_KEY || process.env.LLM_API_KEY || process.env.GROK_API_KEY || '';
+const API_URL = process.env.LLM_API_URL || 'https://api.groq.com/openai/v1/chat/completions';
+const MODEL = process.env.LLM_MODEL || process.env.XAI_MODEL || 'llama-3.3-70b-versatile';
 
 const MAX_MSG_CHARS = 1200;      // per user message
 const MAX_CONTEXT_CHARS = 4000;  // page context
@@ -93,7 +97,7 @@ module.exports = async (req, res) => {
     res.statusCode = 405;
     return res.end(JSON.stringify({ ok: false, error: 'POST only' }));
   }
-  if (!XAI_API_KEY) {
+  if (!API_KEY) {
     res.statusCode = 503;
     return res.end(JSON.stringify({ ok: false, configured: false, error: 'AI not configured' }));
   }
@@ -124,9 +128,9 @@ module.exports = async (req, res) => {
   messages.push(...turns);
 
   try {
-    const r = await fetch(XAI_URL, {
+    const r = await fetch(API_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${XAI_API_KEY}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${API_KEY}` },
       body: JSON.stringify({ model: MODEL, messages, max_tokens: MAX_TOKENS, temperature: 0.6, stream: false }),
     });
     if (!r.ok) {
