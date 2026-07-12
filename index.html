@@ -288,5 +288,9 @@
     document.getElementById('menuClose').addEventListener('click', () => menu.classList.remove('open'));
     menu.querySelectorAll('a').forEach(a => a.addEventListener('click', () => menu.classList.remove('open')));
   </script>
+
+  <!-- Momo — on-page mascot guide. Self-contained static bundle (Adventure Girl, CC0). Roams the
+       page, runs a first-visit guided tour, and chats via /api/chat (Grok, server-side key). -->
+  <script src="/momo-bot/momo-bot.js" defer></script>
 </body>
 </html>
