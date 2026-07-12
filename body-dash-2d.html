@@ -386,7 +386,7 @@ function isTpose(lm){
   const shY=(lm[11].y+lm[12].y)/2;
   const shW=Math.abs(lm[11].x-lm[12].x)+1e-6;
   const span=Math.abs(lm[15].x-lm[16].x);          // wrist-to-wrist width
-  if(span < shW*2.2) return false;                 // arms must be stretched out wide
+  if(span < shW*1.8) return false;                 // arms must be stretched out wide
   const tol=shW*0.9;                               // ...and roughly at shoulder height
   return Math.abs(lm[15].y-shY)<tol && Math.abs(lm[16].y-shY)<tol;
 }
@@ -496,7 +496,8 @@ async function initCameraAndPose(){
   if(typeof Pose==='undefined' || typeof Hands==='undefined')
     throw new Error('Tracking libraries did not load — check your internet connection (needed once to download the models).');
   // camera
-  camStream=await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'user', width:{ideal:640}, height:{ideal:480} }, audio:false });
+  camStream=await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'user', width:{ideal:640}, height:{ideal:480}, resizeMode:{ideal:'none'} }, audio:false });
+  try{ const _vt=camStream.getVideoTracks&&camStream.getVideoTracks()[0], _cap=_vt&&_vt.getCapabilities&&_vt.getCapabilities(); if(_cap&&_cap.zoom&&_vt.applyConstraints) _vt.applyConstraints({advanced:[{zoom:_cap.zoom.min}]}).catch(()=>{}); }catch(e){}   // zoom to the widest FOV if the camera supports it
   video.srcObject=camStream; await video.play().catch(()=>{});
   // pose (body -> gameplay)
   pose=new Pose({ locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}` });

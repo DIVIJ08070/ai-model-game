@@ -81,7 +81,7 @@ function isTpose(lm){ if(!lm) return false;
   var vis=function(i){ return lm[i]&&(lm[i].visibility===undefined||lm[i].visibility>0.5); };
   if(!(vis(11)&&vis(12)&&vis(15)&&vis(16))) return false;
   var shY=(lm[11].y+lm[12].y)/2, shW=Math.abs(lm[11].x-lm[12].x)+1e-6, span=Math.abs(lm[15].x-lm[16].x);
-  if(span<shW*2.2) return false; var tol=shW*0.9;
+  if(span<shW*1.8) return false; var tol=shW*0.9;
   return Math.abs(lm[15].y-shY)<tol && Math.abs(lm[16].y-shY)<tol; }
 function levelForScore(score){ return 1 + Math.floor(score/WALLS_PER_LEVEL); }
 function maxTierForLevel(level){ return level<2 ? 1 : (level<4 ? 2 : 3); }

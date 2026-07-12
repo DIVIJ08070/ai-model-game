@@ -715,7 +715,7 @@ function isTpose(lm){ if(!lm) return false;
   var vis=function(i){ return lm[i]&&(lm[i].visibility===undefined||lm[i].visibility>0.5); };
   if(!(vis(11)&&vis(12)&&vis(15)&&vis(16))) return false;
   var shY=(lm[11].y+lm[12].y)/2, shW=Math.abs(lm[11].x-lm[12].x)+1e-6, span=Math.abs(lm[15].x-lm[16].x);
-  if(span<shW*2.2) return false; var tol=shW*0.9;
+  if(span<shW*1.8) return false; var tol=shW*0.9;
   return Math.abs(lm[15].y-shY)<tol && Math.abs(lm[16].y-shY)<tol; }
 
 /* 5.9 detectorFor — which detector the shared pump routes for a screen+frame (also copied into the smoke). */
@@ -850,7 +850,8 @@ async function startCameraFlow(){
     if(typeof window.Pose==='undefined') await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js');
     if(typeof window.Hands==='undefined') await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js');
     if(typeof window.Pose==='undefined' || typeof window.Hands==='undefined') throw new Error('lib');
-    var stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false});
+    var stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480},resizeMode:{ideal:'none'}},audio:false});
+    try{ var _vt=stream.getVideoTracks&&stream.getVideoTracks()[0], _cap=_vt&&_vt.getCapabilities&&_vt.getCapabilities(); if(_cap&&_cap.zoom&&_vt.applyConstraints) _vt.applyConstraints({advanced:[{zoom:_cap.zoom.min}]}).catch(function(){}); }catch(e){}   // zoom to the widest FOV if the camera supports it
     G.cam.stream=stream;
     var v=G.cam.video; if(v){ v.srcObject=stream; try{ await v.play(); }catch(e){} }
     var pose=new window.Pose({locateFile:function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/pose/'+f; }});

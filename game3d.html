@@ -302,7 +302,7 @@ function isTpose(lm){ if(!lm) return false;
   const vis=i=>lm[i]&&(lm[i].visibility===undefined||lm[i].visibility>0.5);
   if(!(vis(11)&&vis(12)&&vis(15)&&vis(16))) return false;
   const shY=(lm[11].y+lm[12].y)/2, shW=Math.abs(lm[11].x-lm[12].x)+1e-6, span=Math.abs(lm[15].x-lm[16].x);
-  if(span<shW*2.2) return false; const tol=shW*0.9;
+  if(span<shW*1.8) return false; const tol=shW*0.9;
   return Math.abs(lm[15].y-shY)<tol && Math.abs(lm[16].y-shY)<tol; }
 const GESTURE_HOLD=0.6;
 
@@ -847,7 +847,8 @@ async function startCameraFlow(){
   try{
     if(typeof window.Pose==='undefined') await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js');
     if(typeof window.Pose==='undefined') throw new Error('lib');
-    const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false});
+    const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480},resizeMode:{ideal:'none'}},audio:false});
+    try{ const _vt=stream.getVideoTracks&&stream.getVideoTracks()[0], _cap=_vt&&_vt.getCapabilities&&_vt.getCapabilities(); if(_cap&&_cap.zoom&&_vt.applyConstraints) _vt.applyConstraints({advanced:[{zoom:_cap.zoom.min}]}).catch(()=>{}); }catch(e){}   // zoom to the widest FOV if the camera supports it (fit more body without stepping back)
     G.cam.stream=stream;                                 // store immediately so a later throw can still release it
     const v=G.cam.video; v.srcObject=stream; await v.play().catch(()=>{});
     const pose=new window.Pose({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`});
